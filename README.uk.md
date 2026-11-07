@@ -11,6 +11,7 @@
 
 [![Портфоліо](https://img.shields.io/badge/Портфоліо-Notion-000000?style=for-the-badge&logo=notion&logoColor=white)](https://glamorous-plume-2bc.notion.site/AI-Automator-Portfolio-Dmytro-Silchuk-3ba7d0aa93fd81e49f8ff1a566f046db)
 [![Telegram](https://img.shields.io/badge/Telegram-@silchuk__d-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/silchuk_d)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Dmytro%20Silchuk-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/%D0%B4%D0%BC%D0%B8%D1%82%D1%80%D0%BE-%D1%81%D1%96%D0%BB%D1%8C%D1%87%D1%83%D0%BA-a35b58220/)
 [![Email](https://img.shields.io/badge/Email-Написати-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](mailto:dmitriy.silchuk@gmail.com)
 
 </div>
@@ -88,6 +89,6 @@
 
 **Хочете знати, де ваш бізнес втрачає гроші? Почнімо з аудиту.**
 
-[Telegram](https://t.me/silchuk_d) · [Email](mailto:dmitriy.silchuk@gmail.com) · [Портфоліо](https://glamorous-plume-2bc.notion.site/AI-Automator-Portfolio-Dmytro-Silchuk-3ba7d0aa93fd81e49f8ff1a566f046db)
+[Telegram](https://t.me/silchuk_d) · [LinkedIn](https://www.linkedin.com/in/%D0%B4%D0%BC%D0%B8%D1%82%D1%80%D0%BE-%D1%81%D1%96%D0%BB%D1%8C%D1%87%D1%83%D0%BA-a35b58220/) · [Email](mailto:dmitriy.silchuk@gmail.com) · [Портфоліо](https://glamorous-plume-2bc.notion.site/AI-Automator-Portfolio-Dmytro-Silchuk-3ba7d0aa93fd81e49f8ff1a566f046db)
 
 </div>
