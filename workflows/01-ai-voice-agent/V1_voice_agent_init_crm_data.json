@@ -1,0 +1,150 @@
+{
+  "name": "GrowthLab V1 · Happ init — дані з CRM для голосового агента",
+  "description": "вебхук webhook_init для Happ.tools — на старті дзвінка знаходить ліда в Zoho за телефоном і повертає dynamic_variables (імʼя, компанія, lead_id).",
+  "active": false,
+  "nodes": [
+    {
+      "id": "937ca7c7-70e4-4f1b-8bab-15e773ee04a8",
+      "name": "Happ init (початок дзвінка)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "growthlab-happ-init",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "466b79ed-7cd1-4191-aa5f-341caff43c4f",
+      "name": "Номер телефону",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "phone_digits",
+              "type": "string",
+              "value": "={{ String($json.body?.phone_number ?? $json.body?.phoneNumber ?? $json.phone_number ?? '').replace(/\\D/g, '') }}"
+            },
+            {
+              "id": "p2",
+              "name": "dv",
+              "type": "object",
+              "value": "={{ $json.body?.dynamic_variables ?? $json.body?.dynamicVariables ?? {} }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "8b57b8fe-fd2d-4e8c-b86e-255366dffa24",
+      "name": "Zoho CRM · пошук ліда за телефоном",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.zohoapis.eu/crm/v2/Leads/search?phone={{ $json.phone_digits || '0000000' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zohoOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 4000
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1512c1c4-ff29-43f0-9c17-d8cd0fd0791d",
+      "name": "dynamic_variables для агента",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const found = ($input.first().json.data || [])[0] || {};\nconst pre = $('Номер телефону').first().json.dv || {};\nconst junk = s => !s || /^(test|тест|тестовий|asd|qwe|фів|уцк|green zone)/i.test(String(s).trim());\n// тестовий / сміттєвий лід (імʼя або компанія) вважаємо відсутнім — агент говорить як з новим клієнтом\nconst lead = (junk(found.First_Name) && junk(found.Last_Name)) || junk(found.Company) ? {} : found;\nconst first = String(lead.First_Name || pre.name || '').trim().split(' ')[0];\nconst name = junk(first) ? '' : first;\nconst company = lead.Company && !/^@/.test(lead.Company) ? lead.Company : (pre.company || '');\nreturn [{ json: {\n  type: 'conversation_initiation_client_data',\n  dynamic_variables: {\n    name: name,\n    name_greeting: name ? ', ' + name : '',\n    company: company || '',\n    lead_id: lead.id || pre.lead_id || '',\n    lead_found: lead.id ? 'так' : 'ні'\n  }\n} }];"
+      }
+    },
+    {
+      "id": "b8e32ab5-396f-41b8-b16d-b46472f21b4f",
+      "name": "Sticky Note 152e3aa4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "content": "## V1 · Happ init — дані з CRM на старті дзвінка\nHapp викликає цей вебхук (інструмент типу **webhook_init**) щойно починається дзвінок → шукаємо ліда в Zoho за номером → повертаємо `dynamic_variables` (імʼя, компанія, lead_id) для `{{placeholders}}` у промпті голосового агента.",
+        "color": 4,
+        "width": 820,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Happ init (початок дзвінка)": {
+      "main": [
+        [
+          {
+            "node": "Номер телефону",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Номер телефону": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · пошук ліда за телефоном",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · пошук ліда за телефоном": {
+      "main": [
+        [
+          {
+            "node": "dynamic_variables для агента",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

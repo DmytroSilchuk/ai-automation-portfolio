@@ -1,0 +1,200 @@
+{
+  "name": "Sales Intelligence · Part 2 · Sub-workflow: активності угоди (Notes, Calls, Tasks)",
+  "description": "sub-workflow отримує deal_id, паралельно тягне Notes, Calls, Tasks угоди з Zoho CRM (Never Error), Merge → Code збирає компактний JSON.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "9fac8bec-1528-4bc1-be85-279f3093fdd2",
+      "name": "Виклик з основного workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "deal_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "594a2d9f-5a4d-430f-9066-cf722eeffdc2",
+      "name": "Zoho: Notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.zohoapis.eu/crm/v2/Deals/{{ $json.deal_id }}/Notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zohoOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "25bc7470-a545-4f02-a6b5-e216a083f3b0",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      }
+    },
+    {
+      "id": "f181666d-a525-4c9d-9f83-b67369474dbe",
+      "name": "Zoho: Calls",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.zohoapis.eu/crm/v2/Deals/{{ $json.deal_id }}/Calls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zohoOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "089612eb-1563-4eb3-ae97-f2b2a7da88ac",
+      "name": "Zoho: Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        500
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.zohoapis.eu/crm/v2/Deals/{{ $json.deal_id }}/Tasks",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zohoOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "16d94d95-ddb0-4f93-bed5-6c68de94c861",
+      "name": "Зібрати активності",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Збираємо Notes, Calls, Tasks однієї угоди в компактний JSON для AI-агента\nconst dealId = $('Виклик з основного workflow').first().json.deal_id;\n// Zoho повертає 204 без тіла, якщо записів немає — тоді масив порожній\nconst rows = (name) => {\n  const data = $(name).first().json.data;\n  return Array.isArray(data) ? data : [];\n};\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nconst daysAgo = (iso) => Math.floor((today - new Date(iso)) / 86400000);\n\nconst notes = rows('Zoho: Notes').map(n => ({\n  title: n.Note_Title,\n  content: n.Note_Content,\n  created: (n.Created_Time || '').slice(0, 10),\n}));\n\nconst calls = rows('Zoho: Calls')\n  .map(c => ({\n    subject: c.Subject,\n    date: (c.Call_Start_Time || '').slice(0, 10),\n    duration: c.Call_Duration,\n    result: c.Description,\n  }))\n  .sort((a, b) => b.date.localeCompare(a.date));\n\nconst tasks = rows('Zoho: Tasks').map(t => {\n  const done = t.Status === 'Completed';\n  return {\n    subject: t.Subject,\n    due_date: t.Due_Date,\n    status: t.Status,\n    priority: t.Priority,\n    overdue: !done && !!t.Due_Date && daysAgo(t.Due_Date) > 0,\n  };\n});\n\nconst lastCall = calls[0]?.date || null;\n\nreturn [{\n  json: {\n    deal_id: dealId,\n    notes,\n    calls,\n    tasks,\n    stats: {\n      notes_count: notes.length,\n      calls_count: calls.length,\n      last_call_date: lastCall,\n      days_since_last_call: lastCall ? daysAgo(lastCall) : null,\n      open_tasks: tasks.filter(t => t.status !== 'Completed').length,\n      overdue_tasks: tasks.filter(t => t.overdue).length,\n    },\n  },\n}];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Виклик з основного workflow": {
+      "main": [
+        [
+          {
+            "node": "Zoho: Notes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Zoho: Calls",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Zoho: Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho: Notes": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Зібрати активності",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho: Calls": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Zoho: Tasks": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

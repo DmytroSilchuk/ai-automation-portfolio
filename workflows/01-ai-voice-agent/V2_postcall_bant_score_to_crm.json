@@ -1,0 +1,382 @@
+{
+  "name": "GrowthLab V2 · Happ postcall → Zoho CRM (AI_score)",
+  "description": "Happ postcall → нормалізація транскрипту → AI витягує BANT → Code рахує score/статус → оновлення або створення ліда в Zoho з AI_score і Skype_ID=conversation_id.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "f3ba93ad-60c2-4a4a-8e56-7d8f33c47268",
+      "name": "Happ postcall (дзвінок завершено)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        112
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "growthlab-happ-postcall",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "5250803d-9b0f-4bc0-b7df-599dc2324287",
+      "name": "Нормалізація дзвінка",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || $input.first().json;\nconst dv = (b.conversation_initiation_client_data && b.conversation_initiation_client_data.dynamic_variables) || b.dynamic_variables || b.dynamicVariables || {};\nconst turns = Array.isArray(b.transcript) ? b.transcript : (Array.isArray(b.transcription) ? b.transcription : []);\nlet text = turns\n  .map(t => ({ who: (t.role || t.speaker) === 'agent' ? 'Агент' : 'Клієнт', msg: String(t.message ?? t.text ?? '').trim() }))\n  .filter(t => t.msg && t.msg !== '...')\n  .map(t => t.who + ': ' + t.msg).join('\\n');\nif (!text) text = String(b.transcriptText || b.transcript_text || (typeof b.transcript === 'string' ? b.transcript : '') || '');\nconst phone = String(dv.phone_number || dv.system__caller_id || dv.system__called_number || b.phone || b.clientPhone || '').replace(/[^+\\d]/g, '');\nreturn [{ json: {\n  conversation_id: b.conversation_id || b.callId || b.id || dv.system__conversation_id || ('call_' + Date.now()),\n  lead_id: dv.lead_id || '',\n  phone,\n  name: dv.name || '',\n  company: dv.company || '',\n  duration: (b.metadata && b.metadata.call_duration_secs) ?? b.duration ?? dv.system__call_duration_secs ?? null,\n  engine_summary: (b.analysis && b.analysis.transcript_summary) || '',\n  call_successful: (b.analysis && b.analysis.call_successful) || b.callSuccessful || '',\n  transcript: text,\n  client_turns: (text.match(/^Клієнт:/gm) || []).length\n} }];"
+      }
+    },
+    {
+      "id": "c1e49880-b594-4550-adb6-6284eb390010",
+      "name": "Клієнт реально говорив?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        112
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.client_turns }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              },
+              "rightValue": 2
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "38e7022b-3d74-4dd8-8851-5ce4ec30f3fe",
+      "name": "AI · результат кваліфікації (BANT)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        672,
+        112
+      ],
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=Дані з CRM: імʼя={{ $json.name }}, компанія={{ $json.company }}, lead_id={{ $json.lead_id }}\nТривалість дзвінка: {{ $json.duration }} с\n\nТранскрипт голосового дзвінка:\n{{ $json.transcript }}",
+        "options": {
+          "systemMessage": "Ти аналізуєш транскрипт вихідного кваліфікаційного дзвінка AI-агента GrowthLab (AI-автоматизація продажів; пакети: Старт від $1 500, Ріст від $3 500, Enterprise від $7 000). Витягни BANT лише з того, що клієнт СКАЗАВ, нічого не вигадуй.\n\nОцінки строго за таблицею:\n- budget_score: 25 — бюджет від $3 500 або погоджено Ріст/Enterprise; 15 — $1 500–3 499; 5 — до $1 500 (включно з «тисяча-півтори») або «не знаю»; 0 — немає бюджету / відмова / не обговорювали.\n- authority_score: 25 — власник/ЛПР вирішує сам; 15 — впливає або контролює бюджет, але фінальне слово за іншим; 5 — збирає інформацію; 0 — не зʼясовано.\n- need_score: 25 — чіткий біль і 100+ заявок/міс; 15 — біль є, 30–99 заявок; 5 — менше 30 або «цікавлюсь»; 0 — не зʼясовано.\n- timeline_score: 25 — до 1 місяця; 15 — 1–3 місяці; 5 — понад 3 місяці / «колись»; 0 — не зʼясовано.\nБюджет оцінюй за сумою, яку назвав клієнт, а не за пакетом, який запропонував агент. Пиши українською."
+        }
+      }
+    },
+    {
+      "id": "89188dc8-479f-4376-8e89-facb91dd42f2",
+      "name": "OpenAI gpt-5-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        688,
+        336
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "id": "b5bf7628-6400-471b-8da7-74c1144cd809",
+      "name": "BANT JSON",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        816,
+        336
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"client_name\": { \"type\": \"string\", \"description\": \"Імʼя клієнта з розмови або порожньо\" },\n    \"company\": { \"type\": \"string\", \"description\": \"Назва компанії з розмови або порожньо\" },\n    \"need\": { \"type\": \"string\" },\n    \"leads_per_month\": { \"type\": [\"number\", \"null\"] },\n    \"timeline\": { \"type\": \"string\" },\n    \"authority\": { \"type\": \"string\" },\n    \"budget\": { \"type\": \"string\" },\n    \"budget_score\": { \"type\": \"number\", \"enum\": [0, 5, 15, 25] },\n    \"authority_score\": { \"type\": \"number\", \"enum\": [0, 5, 15, 25] },\n    \"need_score\": { \"type\": \"number\", \"enum\": [0, 5, 15, 25] },\n    \"timeline_score\": { \"type\": \"number\", \"enum\": [0, 5, 15, 25] },\n    \"objections\": { \"type\": \"string\", \"description\": \"Заперечення через кому або немає\" },\n    \"next_action\": { \"type\": \"string\", \"description\": \"Наступний крок для менеджера, до 200 символів\" },\n    \"callback_time\": { \"type\": \"string\", \"description\": \"Зручний час дзвінка менеджера або порожньо\" },\n    \"summary\": { \"type\": \"string\", \"description\": \"2-3 речення українською\" }\n  },\n  \"required\": [\"need\", \"timeline\", \"authority\", \"budget\", \"budget_score\", \"authority_score\", \"need_score\", \"timeline_score\", \"objections\", \"next_action\", \"summary\"]\n}"
+      }
+    },
+    {
+      "id": "aff06e45-5db3-44e0-94c1-ec6940420563",
+      "name": "Score і статус (детерміновано)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json.output;\nconst c = $('Нормалізація дзвінка').first().json;\nconst s = ['budget_score','authority_score','need_score','timeline_score'].map(k => Number(r[k]) || 0);\nconst score = s.reduce((a, b) => a + b, 0);\nconst status = score >= 70 ? 'Pre-Qualified' : score >= 40 ? 'Contact in Future' : 'Not Qualified';\nconst bant = { budget: r.budget, authority: r.authority, need: r.need, timeline: r.timeline, leads_per_month: r.leads_per_month ?? null, score, budget_score: s[0], authority_score: s[1], need_score: s[2], timeline_score: s[3], callback_time: r.callback_time || '', channel: 'voice', conversation_id: c.conversation_id };\nconst parts = String(r.client_name || c.name || '').trim().split(/\\s+/).filter(Boolean);\nreturn [{ json: {\n  ...c,\n  score, status,\n  bant_confirmed: s.filter(x => x >= 15).length,\n  score_comment: `B=${s[0]} (${r.budget}) · A=${s[1]} (${r.authority}) · N=${s[2]} (${r.need}) · T=${s[3]} (${r.timeline}) = ${score}`.slice(0, 1990),\n  objections: String(r.objections || 'немає').slice(0, 250),\n  next_action: String(r.next_action || '').slice(0, 250),\n  description: (r.summary + '\\n\\nBANT JSON: ' + JSON.stringify(bant)).slice(0, 30000),\n  first_name: parts.length > 1 ? parts[0] : '',\n  last_name: parts.length > 1 ? parts.slice(1).join(' ') : (parts[0] || 'Голосовий лід'),\n  company_final: r.company || c.company || 'Не вказано',\n  bant_json: bant\n} }];"
+      }
+    },
+    {
+      "id": "af6455b9-be40-4a1f-99af-4337b7df7f79",
+      "name": "Лід уже є в CRM?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        112
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.lead_id && (!$('AI · результат кваліфікації (BANT)').first().json.output.company || !$json.company || $('AI · результат кваліфікації (BANT)').first().json.output.company.toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi,'').includes($json.company.toLowerCase().replace(/[^a-zа-яіїєґ0-9]/gi,'').slice(0,5))) ? $json.lead_id : '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "0b6c426a-35bc-43fc-8bb8-247306b4a032",
+      "name": "Zoho CRM · оновити лід (AI_score)",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        1472,
+        16
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "update",
+        "leadId": "={{ $json.lead_id }}",
+        "updateFields": {
+          "Lead_Status": "={{ $json.status }}",
+          "Skype_ID": "={{ $json.conversation_id }}",
+          "Description": "={{ $json.description }}",
+          "customFields": {
+            "customFields": [
+              {
+                "fieldId": "score_AI",
+                "value": "={{ $json.score }}"
+              },
+              {
+                "fieldId": "bant_qalif",
+                "value": "={{ $json.bant_confirmed }}"
+              },
+              {
+                "fieldId": "SCORE_COMMENT",
+                "value": "={{ $json.score_comment }}"
+              },
+              {
+                "fieldId": "AI_Objections",
+                "value": "={{ $json.objections }}"
+              },
+              {
+                "fieldId": "AI_Next_Action",
+                "value": "={{ $json.next_action }}"
+              },
+              {
+                "fieldId": "AI_Last_Analisis_Date",
+                "value": "={{ $now.setZone('Europe/Kyiv').toFormat('yyyy-MM-dd') }}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3c0e33c8-26a0-4a6c-a770-b7260accb857",
+      "name": "Zoho CRM · створити лід (AI_score)",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        1472,
+        208
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "create",
+        "lastName": "={{ $json.last_name }}",
+        "Company": "={{ $json.company_final }}",
+        "additionalFields": {
+          "First_Name": "={{ $json.first_name }}",
+          "Phone": "={{ $json.phone }}",
+          "Lead_Source": "Cold Call",
+          "Lead_Status": "={{ $json.status }}",
+          "Skype_ID": "={{ $json.conversation_id }}",
+          "Description": "={{ $json.description }}",
+          "customFields": {
+            "customFields": [
+              {
+                "fieldId": "score_AI",
+                "value": "={{ $json.score }}"
+              },
+              {
+                "fieldId": "bant_qalif",
+                "value": "={{ $json.bant_confirmed }}"
+              },
+              {
+                "fieldId": "SCORE_COMMENT",
+                "value": "={{ $json.score_comment }}"
+              },
+              {
+                "fieldId": "AI_Objections",
+                "value": "={{ $json.objections }}"
+              },
+              {
+                "fieldId": "AI_Next_Action",
+                "value": "={{ $json.next_action }}"
+              },
+              {
+                "fieldId": "AI_Last_Analisis_Date",
+                "value": "={{ $now.setZone('Europe/Kyiv').toFormat('yyyy-MM-dd') }}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "acbdb525-121e-4227-b51c-ca87bb41a636",
+      "name": "Sticky Note 39a83f3e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        500
+      ],
+      "parameters": {
+        "content": "## V2 · Postcall → Zoho CRM\nHapp після дзвінка шле транскрипт (інструмент **webhook_postcall** / Call Webhook) → нормалізація → AI витягує BANT за таблицею → **Code** рахує score 0-100 і статус (не LLM) → оновлює лід із init (lead_id) або створює новий з **AI_score**, а `Skype_ID = conversation_id`.",
+        "color": 4,
+        "width": 1060,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Happ postcall (дзвінок завершено)": {
+      "main": [
+        [
+          {
+            "node": "Нормалізація дзвінка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нормалізація дзвінка": {
+      "main": [
+        [
+          {
+            "node": "Клієнт реально говорив?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Клієнт реально говорив?": {
+      "main": [
+        [
+          {
+            "node": "AI · результат кваліфікації (BANT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI · результат кваліфікації (BANT)": {
+      "main": [
+        [
+          {
+            "node": "Score і статус (детерміновано)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI gpt-5-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI · результат кваліфікації (BANT)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BANT JSON": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI · результат кваліфікації (BANT)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score і статус (детерміновано)": {
+      "main": [
+        [
+          {
+            "node": "Лід уже є в CRM?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Лід уже є в CRM?": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · оновити лід (AI_score)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zoho CRM · створити лід (AI_score)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

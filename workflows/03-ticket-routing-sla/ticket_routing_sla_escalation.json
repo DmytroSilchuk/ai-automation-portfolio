@@ -1,0 +1,915 @@
+{
+  "name": "HouseBox — AI Ticket Routing + SLA + Escalation",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "id": "st1",
+      "name": "Трак 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        -140
+      ],
+      "parameters": {
+        "content": "## ТРАК 1 · ВХІД ТІКЕТА\nGmail (support@ HouseBox) → контекст → **AI Classifier з Chain of Thought** → валідація + SLA → Google Sheets → мітка `HB-Ticketed` → Telegram власнику з reasoning. Спам логуємо як `closed`, без сповіщень.",
+        "width": 2020,
+        "height": 560,
+        "color": 7
+      }
+    },
+    {
+      "id": "st2",
+      "name": "Трак 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        460
+      ],
+      "parameters": {
+        "content": "## ТРАК 2 · SLA WATCHER\nКожні 5 хв: відкриті тікети → прострочення → рівень **L0** (0–29 хв, власник) / **L1** (30–59 хв, тімлідка Олена) / **L2** (60+ хв, лист власнику Дмитру). Рівень записується в таблицю — повторно не надсилається.",
+        "width": 2020,
+        "height": 600,
+        "color": 3
+      }
+    },
+    {
+      "id": "n01",
+      "name": "Gmail Trigger (every 1m)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        100
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "to:you@example.com -label:hb-ticketed newer_than:1d",
+          "readStatus": "both"
+        },
+        "options": {}
+      },
+      "notes": "Скринька підтримки HouseBox. Листи з міткою HB-Ticketed пропускаються — захист від дублів.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n02",
+      "name": "Collect Ticket Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        100
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "t1",
+              "name": "ticket_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "t2",
+              "name": "from_email",
+              "value": "={{ $json.from.value[0].name ? $json.from.value[0].name + ' <' + $json.from.value[0].address + '>' : $json.from.value[0].address }}",
+              "type": "string"
+            },
+            {
+              "id": "t3",
+              "name": "subject",
+              "value": "={{ $json.subject || '(без теми)' }}",
+              "type": "string"
+            },
+            {
+              "id": "t4",
+              "name": "body",
+              "value": "={{ ($json.text || $json.snippet || '').slice(0, 4000) }}",
+              "type": "string"
+            },
+            {
+              "id": "t5",
+              "name": "created_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "t6",
+              "name": "thread_link",
+              "value": "=https://mail.google.com/mail/u/0/#inbox/{{ $json.threadId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n03",
+      "name": "AI Classifier (Chain of Thought)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        100
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Новий лист у підтримку HouseBox:\n\nВід: {{ $json.from_email }}\nТема: {{ $json.subject }}\nТекст:\n{{ $json.body }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "## 1. РОЛЬ\nТи — старший координатор клієнтської підтримки інтернет-магазину HouseBox. Твоя робота — за кілька секунд розібрати новий лист клієнта: визначити, що це за звернення, наскільки воно термінове, хто з команди має його взяти і за скільки хвилин. Ти не відповідаєш клієнту — тільки маршрутизуєш.\n\n## 2. КОНТЕКСТ БІЗНЕСУ\n- HouseBox — український інтернет-магазин товарів для дому: посуд, текстиль, декор, органайзери, дрібна техніка. ~900 звернень на місяць (≈43 на робочий день) через e-mail, Telegram і телефон.\n- Доставка Новою поштою 1–3 дні. Повернення 14 днів. Оплата: картка, Apple/Google Pay, накладений платіж.\n- Підтримка працює пн–пт 9:00–19:00, сб 10:00–16:00. У команді 2 менеджери підтримки, менеджерка повернень на складі, бухгалтерка і власник.\n- Головна біль зараз: CSAT впав з 4.3 до 2.9, середній час відповіді 11 годин, важливі листи губляться серед типових питань і спаму.\n\nКоманда (owner — рівно одне значення):\n- \"andrii\" — Андрій, менеджер підтримки: доставка, статус замовлення, питання про товар.\n- \"iryna\" — Ірина, менеджерка повернень (склад): повернення, обмін, брак, пошкодження, не той товар.\n- \"maryna\" — Марина, бухгалтерка: оплата, подвійне списання, повернення коштів на картку, рахунки для юросіб.\n- \"olena\" — Олена, старша менеджерка (тімлідка): B2B/оптові клієнти, все незрозуміле і все, що не підходить в інші категорії.\n- \"dmytro\" — Дмитро, власник: ЛИШЕ юридичні загрози (суд, позов, юрист, Держпродспоживслужба, поліція) і погрози публічним скандалом у ЗМІ. Погроза відкликати платіж через банк (chargeback) — це НЕ юридична загроза, а фінансова: owner = \"maryna\", priority = P1.\n- \"none\" — для спаму.\n\n## 3. ІНСТРУКЦІЯ: ОЦІНИ ЛИСТ ЗА 4 ВИМІРАМИ\n\n### Вимір 1. Категорія (category)\n- \"доставка\" — де замовлення, ТТН, терміни, затримка, загублена посилка, зміна відділення.\n- \"повернення_брак\" — повернення, обмін, брак, пошкоджений товар, не той товар, неповний комплект.\n- \"оплата\" — не проходить оплата, подвійне списання, повернення коштів, рахунок-фактура, накладений платіж.\n- \"товар_b2b\" — питання про товар до покупки (характеристики, наявність, догляд), оптові та корпоративні замовлення.\n- \"спам\" — ЛИШЕ листи не від клієнтів: реклама, SEO-послуги, розсилки, фішинг, пропозиції «співпраці», які не є замовленням.\n- Подяка або відгук від реального клієнта — НІКОЛИ не спам: категорія за темою відгуку (доставка / повернення_брак / оплата / товар_b2b), priority = P4, owner = \"olena\" (вона просить задоволених клієнтів залишити відгук на Google Maps — це піднімає CSAT).\n\n### Вимір 2. Пріоритет (priority) і SLA\n- \"P1\" (SLA 30 хв) — критично: юридичні погрози, chargeback; гроші списано, а замовлення немає; подвійне списання; погроза скандалом у ЗМІ/соцмережах з великою аудиторією; B2B-замовлення зірвано через нас.\n- \"P2\" (SLA 120 хв) — серйозно: брак/пошкодження/не той товар; посилка загубилась або затримка >5 днів; клієнт пише повторно, бо йому не відповіли; агресивний тон; VIP-клієнт з будь-яким питанням.\n- \"P3\" (SLA 240 хв) — стандарт: статус замовлення без ознак проблеми, звичайне повернення/обмін належної якості, питання про товар, способи оплати.\n- \"P4\" (SLA 1440 хв) — неважливо: подяка, відгук, побажання, загальні пропозиції; весь спам.\n\n### Вимір 3. Власник (owner)\nПризначай за категорією: доставка → andrii, повернення_брак → iryna, оплата → maryna, товар_b2b → olena (питання про товар від роздрібного клієнта → andrii), спам → none.\nПодяки та відгуки клієнтів → olena.\nЯкщо в листі є юридична загроза (суд, позов, юрист, Держпродспоживслужба, поліція, ЗМІ) — owner = \"dmytro\" незалежно від категорії. Chargeback, подвійне списання, повернення коштів — завжди maryna.\n\n### Вимір 4. Тональність (customer_sentiment)\n\"positive\" | \"neutral\" | \"frustrated\" | \"angry\".\n\n### Спеціальні правила\n- VIP = оптові/корпоративні клієнти (готелі, кав'ярні, офіси, замовлення від 20 000 грн) або клієнт пише, що він постійний (3+ замовлення). Для VIP пріоритет НЕ нижче P2.\n- Слова «вже вдруге», «втретє», «знову», «досі ніхто не відповів» — ознака повторного негативу: підніми пріоритет на 1 рівень (але не вище P1).\n- Звичайне повернення товару належної якості у спокійному тоні (не підійшов колір/розмір) — це P3, а не P2.\n- Лист від клієнта з проблемою, навіть написаний недбало або з помилками, — НЕ спам.\n- Якщо підходять кілька пріоритетів — обирай вищий.\n\n## 4. CHAIN OF THOUGHT (обов'язково)\nПерш ніж обрати пріоритет, послідовно проаналізуй 3 виміри і запиши висновки в поле \"reasoning\" — 2–3 повних речення українською:\n1. Терміновість: чи є ознаки часового тиску, повторного звернення, емоційної ескалації?\n2. Бізнес-вплив: чи йдеться про гроші клієнта, юридичний ризик, відтік, репутацію, великий B2B-чек?\n3. Контекст: VIP чи ні, що саме сталося, чому саме цей власник.\nПоле \"reasoning\" має пояснювати ЧОМУ обрано пріоритет і власника, а не повторювати назву пріоритету. Поганий приклад: «Пріоритет P2». Добрий приклад: «Клієнт пише вдруге і досі без відповіді, ваза прийшла розбитою — це брак і ризик негативного відгуку. Гроші вже сплачені, тому потрібне швидке рішення про заміну. Веде Ірина, бо це повернення/брак».\n\n## 5. ФОРМАТ ВІДПОВІДІ\nПоверни ВИКЛЮЧНО валідний JSON без markdown і тексту поза ним. Поле \"reasoning\" — ПЕРШИМ (спочатку міркування, потім рішення):\n{\n  \"reasoning\": \"2–3 речення: терміновість + бізнес-вплив + контекст і чому цей власник\",\n  \"category\": \"доставка|повернення_брак|оплата|товар_b2b|спам\",\n  \"priority\": \"P1|P2|P3|P4\",\n  \"owner\": \"andrii|iryna|maryna|olena|dmytro|none\",\n  \"sla_minutes\": 30|120|240|1440,\n  \"is_vip\": true|false,\n  \"summary\": \"1 речення: що хоче клієнт\",\n  \"customer_sentiment\": \"positive|neutral|frustrated|angry\"\n}\n"
+        }
+      },
+      "notes": "Серце системи. Промпт: роль → контекст HouseBox → 4 виміри → Chain of Thought → JSON. reasoning — перше поле.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n05",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"reasoning\": \"Клієнт пише вдруге і досі без відповіді, ваза прийшла розбитою — це брак і ризик негативного відгуку. Гроші вже сплачені, тому потрібне швидке рішення. Веде Ірина, бо це брак.\",\n  \"category\": \"повернення_брак\",\n  \"priority\": \"P2\",\n  \"owner\": \"iryna\",\n  \"sla_minutes\": 120,\n  \"is_vip\": false,\n  \"summary\": \"Ваза в замовленні HB-10377 прийшла розбитою, клієнт чекає рішення сьогодні.\",\n  \"customer_sentiment\": \"angry\"\n}"
+      }
+    },
+    {
+      "id": "n06",
+      "name": "Flatten + валідація",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const TEAM = {\n  andrii: { name: 'Андрій', role: 'менеджер підтримки', tg: '@hb_andrii' },\n  iryna:  { name: 'Ірина', role: 'менеджерка повернень', tg: '@hb_iryna' },\n  maryna: { name: 'Марина', role: 'бухгалтерка', tg: '@hb_maryna' },\n  olena:  { name: 'Олена', role: 'старша менеджерка (тімлідка)', tg: '@hb_olena' },\n  dmytro: { name: 'Дмитро', role: 'власник', tg: '@hb_dmytro' },\n  none:   { name: '—', role: 'спам, без власника', tg: '' },\n};\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Плоский тікет + валідація відповіді AI (для кожного листа окремо)\nconst ctx = $('Collect Ticket Context').item.json;\nconst o = $json.output ?? {};\n\nconst SLA = { P1: 30, P2: 120, P3: 240, P4: 1440 };\nconst CATEGORY_OWNER = { 'доставка': 'andrii', 'повернення_брак': 'iryna', 'оплата': 'maryna', 'товар_b2b': 'olena', 'спам': 'none' };\n\nconst category = Object.keys(CATEGORY_OWNER).includes(o.category) ? o.category : 'товар_b2b';\nlet priority = Object.keys(SLA).includes(o.priority) ? o.priority : 'P2';   // незрозуміло -> P2, людина подивиться\nif (o.is_vip === true && ['P3', 'P4'].includes(priority) && category !== 'спам') priority = 'P2'; // правило VIP\nif (category === 'спам') priority = 'P4';\nlet owner = TEAM[o.owner] ? o.owner : CATEGORY_OWNER[category];\nif (category === 'спам') owner = 'none';\nif (category !== 'спам' && owner === 'none') owner = 'olena';          // default owner\n\nconst slaMinutes = category === 'спам' ? 0 : SLA[priority];             // SLA рахує код, а не AI\nconst created = DateTime.fromISO(ctx.created_at).setZone('Europe/Kyiv');\nconst deadline = category === 'спам' ? '' : created.plus({ minutes: slaMinutes }).toISO();\nconst reasoning = (o.reasoning || '').trim() || 'AI не надав обґрунтування — перевірити вручну.';\nconst sentiment = ['positive', 'neutral', 'frustrated', 'angry'].includes(o.customer_sentiment) ? o.customer_sentiment : 'neutral';\nconst who = TEAM[owner];\nconst icon = { P1: '🔴', P2: '🟠', P3: '🟡', P4: '⚪' }[priority];\n\nconst tg_text =\n  `${icon} <b>Новий тікет — ${priority}${o.is_vip ? ' · VIP' : ''}</b>\\n` +\n  `👤 <b>Власник:</b> ${esc(who.name)} (${esc(who.role)}) ${esc(who.tg)}\\n` +\n  `📂 <b>Категорія:</b> ${esc(category)}\\n` +\n  `⏱ <b>SLA:</b> ${slaMinutes} хв (до ${created.plus({ minutes: slaMinutes }).toFormat('dd.MM HH:mm')})\\n` +\n  `💬 <b>Тональність:</b> ${esc(sentiment)}\\n\\n` +\n  `<b>Тема:</b> ${esc(ctx.subject)}\\n<b>Від:</b> ${esc(ctx.from_email)}\\n\\n` +\n  `<b>Що сталося:</b> ${esc(o.summary)}\\n\\n` +\n  `🧠 <b>Чому такий пріоритет (AI):</b>\\n<i>${esc(reasoning)}</i>\\n\\n` +\n  `<a href=\"${ctx.thread_link}\">→ Відкрити лист</a>`;\n\nreturn {\n  json: {\n    ticket_id: ctx.ticket_id,\n    created_at: created.toISO(),\n    from_email: ctx.from_email,\n    subject: ctx.subject,\n    category,\n    priority,\n    owner,\n    sla_minutes: slaMinutes,\n    sla_deadline: deadline,\n    status: category === 'спам' ? 'closed' : 'open',\n    summary: o.summary || '',\n    reasoning,\n    sentiment,\n    thread_link: ctx.thread_link,\n    escalation_level: '',\n    escalated_at: '',\n    tg_text,\n  },\n};\n"
+      },
+      "notes": "SLA-хвилини і дедлайн рахує код за пріоритетом (ISO 8601, Europe/Kyiv). VIP → мінімум P2. Невідоме → P2 + Олена.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n07",
+      "name": "Log → Tickets Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1j5SdF-AocJq0s0gAa_OgQz7Tydhm5wZZJz-GTyHnh7M",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tickets",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $json.ticket_id }}",
+            "created_at": "={{ $json.created_at }}",
+            "from_email": "={{ $json.from_email }}",
+            "subject": "={{ $json.subject }}",
+            "category": "={{ $json.category }}",
+            "priority": "={{ $json.priority }}",
+            "owner": "={{ $json.owner }}",
+            "sla_minutes": "={{ $json.sla_minutes }}",
+            "sla_deadline": "={{ $json.sla_deadline }}",
+            "status": "={{ $json.status }}",
+            "summary": "={{ $json.summary }}",
+            "reasoning": "={{ $json.reasoning }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "thread_link": "={{ $json.thread_link }}",
+            "escalation_level": "={{ $json.escalation_level }}",
+            "escalated_at": "={{ $json.escalated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "from_email",
+              "displayName": "from_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_minutes",
+              "displayName": "sla_minutes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_deadline",
+              "displayName": "sla_deadline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalation_level",
+              "displayName": "escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalated_at",
+              "displayName": "escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "n08",
+      "name": "Gmail: мітка HB-Ticketed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Flatten + валідація').item.json.ticket_id }}",
+        "labelIds": [
+          "Label_16"
+        ]
+      }
+    },
+    {
+      "id": "n09",
+      "name": "Не спам?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Flatten + валідація').item.json.category }}",
+              "rightValue": "спам",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Telegram: Notify Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1340,
+        20
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $('Flatten + валідація').item.json.tg_text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "notes": "Повідомлення власнику з Chain of Thought — менеджер бачить, ЧОМУ саме такий пріоритет.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n11",
+      "name": "SLA Watcher (every 5m)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        720
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Read Open Tickets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -160,
+        720
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1j5SdF-AocJq0s0gAa_OgQz7Tydhm5wZZJz-GTyHnh7M",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tickets",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "open"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n13",
+      "name": "Compute Escalation Level",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        720
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const TEAM = {\n  andrii: { name: 'Андрій', role: 'менеджер підтримки', tg: '@hb_andrii' },\n  iryna:  { name: 'Ірина', role: 'менеджерка повернень', tg: '@hb_iryna' },\n  maryna: { name: 'Марина', role: 'бухгалтерка', tg: '@hb_maryna' },\n  olena:  { name: 'Олена', role: 'старша менеджерка (тімлідка)', tg: '@hb_olena' },\n  dmytro: { name: 'Дмитро', role: 'власник', tg: '@hb_dmytro' },\n  none:   { name: '—', role: 'спам, без власника', tg: '' },\n};\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Рівень ескалації для кожного відкритого тікета з простроченим SLA.\n// L0: 0–29 хв після breach -> нагадування власнику; L1: 30–59 хв -> тімлідка Олена; L2: 60+ хв -> лист власнику.\n// Надсилаємо лише якщо рівень ВИЩИЙ за вже зафіксований у таблиці (без повторів кожні 5 хв).\nconst now = DateTime.now().setZone('Europe/Kyiv');\nconst out = [];\nfor (const item of $input.all()) {\n  const t = item.json;\n  if (!t.sla_deadline || !t.ticket_id) continue;\n  const deadline = DateTime.fromISO(String(t.sla_deadline));\n  if (!deadline.isValid) continue;\n  const overdue = Math.floor(now.diff(deadline, 'minutes').minutes);\n  if (overdue < 0) continue;                                    // SLA ще не порушено\n  const level = overdue >= 60 ? 2 : overdue >= 30 ? 1 : 0;\n  const prev = t.escalation_level === '' || t.escalation_level === undefined ? -1 : Number(t.escalation_level);\n  if (level <= prev) continue;                                  // цей рівень уже надсилали\n\n  const who = TEAM[t.owner] ?? TEAM.olena;\n  const head = `<b>Тема:</b> ${esc(t.subject)}\\n<b>Від:</b> ${esc(t.from_email)}\\n<b>Категорія:</b> ${esc(t.category)} · ${esc(t.sentiment)}\\n<b>Резюме:</b> ${esc(t.summary)}`;\n  const tg_text = level === 0\n    ? `⏰ <b>L0 · Нагадування власнику — SLA прострочено</b>\\n\\n${esc(who.name)} ${esc(who.tg)}, тікет <b>${esc(t.priority)}</b> чекає на відповідь уже на <b>${overdue} хв</b> довше за SLA (${esc(t.sla_minutes)} хв).\\n\\n${head}\\n\\n<a href=\"${t.thread_link}\">→ Взяти в роботу</a>`\n    : `🚨 <b>L1 · Ескалація тімлідці</b>\\n\\nОлена @hb_olena, тікет <b>${esc(t.priority)}</b> прострочено на <b>${overdue} хв</b>. Власник ${esc(who.name)} (${esc(who.role)}) не зреагував на нагадування.\\n\\n${head}\\n\\n🧠 <b>Reasoning AI:</b> <i>${esc(t.reasoning)}</i>\\n\\n<a href=\"${t.thread_link}\">→ Допомогти або перепризначити</a>`;\n\n  out.push({\n    json: {\n      ...t,\n      owner_name: who.name,\n      minutes_overdue: overdue,\n      escalation_level: level,\n      escalated_at: now.toISO(),\n      tg_text,\n    },\n  });\n}\nreturn out;\n"
+      },
+      "notes": "L0 0–29 хв / L1 30–59 хв / L2 60+ хв після дедлайну. Тільки якщо рівень вищий за вже надісланий.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n14",
+      "name": "Sheets: зафіксувати рівень",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        340,
+        900
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1j5SdF-AocJq0s0gAa_OgQz7Tydhm5wZZJz-GTyHnh7M",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tickets",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $json.ticket_id }}",
+            "escalation_level": "={{ String($json.escalation_level) }}",
+            "escalated_at": "={{ $json.escalated_at }}"
+          },
+          "matchingColumns": [
+            "ticket_id"
+          ],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalation_level",
+              "displayName": "escalation_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalated_at",
+              "displayName": "escalated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Switch by Level",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        340,
+        700
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "l0",
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L0 — Owner"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "l1",
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L1 — Team Lead"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "l2",
+                    "leftValue": "={{ $json.escalation_level }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "L2 — Director"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Telegram: Remind Owner (L0)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        560
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.tg_text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "notes": "L0 — м'яке нагадування власнику тікета.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n17",
+      "name": "Telegram: Notify TL (L1)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        720
+      ],
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.tg_text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "notes": "L1 — тімлідка Олена отримує контекст і reasoning: допомогти або перепризначити.",
+      "notesInFlow": false
+    },
+    {
+      "id": "n18",
+      "name": "Email: Director (L2)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        640,
+        880
+      ],
+      "parameters": {
+        "sendTo": "you@example.com",
+        "subject": "=[ESCALATION L2] {{ $json.priority }} · {{ $json.subject }}",
+        "emailType": "html",
+        "message": "=<h2>Ескалація L2 — тікет {{ $json.priority }} прострочено на {{ $json.minutes_overdue }} хв</h2>\n<p>Власник тікета <b>{{ $json.owner_name }}</b> і тімлідка Олена не зреагували після нагадування (L0) та ескалації (L1). Потрібне ваше рішення.</p>\n<table cellpadding=\"6\" style=\"border-collapse:collapse;border:1px solid #ddd\">\n<tr><td><b>Тема</b></td><td>{{ $json.subject }}</td></tr>\n<tr><td><b>Від</b></td><td>{{ $json.from_email }}</td></tr>\n<tr><td><b>Категорія</b></td><td>{{ $json.category }}</td></tr>\n<tr><td><b>Тональність</b></td><td>{{ $json.sentiment }}</td></tr>\n<tr><td><b>Створено</b></td><td>{{ $json.created_at }}</td></tr>\n<tr><td><b>SLA</b></td><td>{{ $json.sla_minutes }} хв, дедлайн {{ $json.sla_deadline }}</td></tr>\n</table>\n<h3>Резюме</h3><p>{{ $json.summary }}</p>\n<h3>Чому AI поставив такий пріоритет</h3><p><i>{{ $json.reasoning }}</i></p>\n<p><a href=\"{{ $json.thread_link }}\">→ Відкрити лист клієнта</a></p>\n<p style=\"color:#888\">HouseBox · AI Ticket Routing + SLA</p>",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "HouseBox SLA Watcher"
+        }
+      },
+      "notes": "L2 — лист власнику з повним контекстом для управлінського рішення.",
+      "notesInFlow": false
+    },
+    {
+      "id": "ffa8558c-6f67-434e-abb4-fd2fef380dfa",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        20,
+        300
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger (every 1m)": {
+      "main": [
+        [
+          {
+            "node": "Collect Ticket Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Ticket Context": {
+      "main": [
+        [
+          {
+            "node": "AI Classifier (Chain of Thought)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classifier (Chain of Thought)": {
+      "main": [
+        [
+          {
+            "node": "Flatten + валідація",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Classifier (Chain of Thought)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten + валідація": {
+      "main": [
+        [
+          {
+            "node": "Log → Tickets Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log → Tickets Sheet": {
+      "main": [
+        [
+          {
+            "node": "Gmail: мітка HB-Ticketed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: мітка HB-Ticketed": {
+      "main": [
+        [
+          {
+            "node": "Не спам?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Не спам?": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Notify Owner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "SLA Watcher (every 5m)": {
+      "main": [
+        [
+          {
+            "node": "Read Open Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Open Tickets": {
+      "main": [
+        [
+          {
+            "node": "Compute Escalation Level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Escalation Level": {
+      "main": [
+        [
+          {
+            "node": "Switch by Level",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sheets: зафіксувати рівень",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Level": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Remind Owner (L0)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Notify TL (L1)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email: Director (L2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Classifier (Chain of Thought)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Kyiv"
+  },
+  "nodeGroups": []
+}

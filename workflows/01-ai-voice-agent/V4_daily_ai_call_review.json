@@ -1,0 +1,565 @@
+{
+  "name": "GrowthLab V4 · AI-аналіз голосових розмов Happ (щодня 09:15)",
+  "description": "щодня тягне з Happ API транскрипти дзвінків голосового агента, підтягує ліда з Zoho, AI-аналітик оцінює розмову і пише в Google Sheets «Аналіз дзвінків».",
+  "active": false,
+  "nodes": [
+    {
+      "id": "b7af78bc-12de-4a8a-be36-aa50b8949c4e",
+      "name": "Щодня о 09:15",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        112
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4f9106d2-f3e0-435c-8bef-590d057e437b",
+      "name": "Happ API · дзвінки за добу",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        112
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.happ.tools/api/calls-history",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "companyId",
+              "value": "2f7f8c9c-4710-4830-89c2-f0614916e9e6"
+            },
+            {
+              "name": "filter",
+              "value": "=assistantId:eq:YOUR_HAPP_ASSISTANT_ID;status:eq:transcribed;callDate:gte:{{ $now.setZone('Europe/Kyiv').minus({ days: 1 }).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "take",
+              "value": "100"
+            },
+            {
+              "name": "sortBy",
+              "value": "callDate"
+            },
+            {
+              "name": "sortOrder",
+              "value": "ASC"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "64823b9e-d03f-4e7e-8530-282a50af3abb",
+      "name": "Кожен дзвінок окремо",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        112
+      ],
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "70a7bfdc-4d92-4128-8bcc-c35e6fec9ebf",
+      "name": "Happ API · транскрипт дзвінка",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        32
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.happ.tools/api/calls-history/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      }
+    },
+    {
+      "id": "0d7e709e-a9c7-4a7a-9b17-a4659fb1b167",
+      "name": "Zoho CRM · лід (lead_id або Skype_ID)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        32
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.dynamicVariables?.lead_id ? 'https://www.zohoapis.eu/crm/v2/Leads/' + $json.dynamicVariables.lead_id : 'https://www.zohoapis.eu/crm/v2/Leads/search?criteria=(Skype_ID:equals:' + ($json.dynamicVariables?.system__conversation_id || 'none') + ')' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "zohoOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "12444aa4-6093-46a5-8ab9-5018138f1110",
+      "name": "Дзвінок для аналізу",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        32
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "call_id",
+              "type": "string",
+              "value": "={{ $('Happ API · транскрипт дзвінка').item.json.id }}"
+            },
+            {
+              "id": "a2",
+              "name": "call_date",
+              "type": "string",
+              "value": "={{ $('Happ API · транскрипт дзвінка').item.json.callDate ? DateTime.fromISO($('Happ API · транскрипт дзвінка').item.json.callDate).setZone('Europe/Kyiv').toFormat('yyyy-MM-dd HH:mm') : '' }}"
+            },
+            {
+              "id": "a3",
+              "name": "duration",
+              "type": "number",
+              "value": "={{ $('Happ API · транскрипт дзвінка').item.json.duration || 0 }}"
+            },
+            {
+              "id": "a4",
+              "name": "phone",
+              "type": "string",
+              "value": "={{ $('Happ API · транскрипт дзвінка').item.json.clientPhone || $('Happ API · транскрипт дзвінка').item.json.dynamicVariables?.phone_number || '' }}"
+            },
+            {
+              "id": "a5",
+              "name": "lead_id",
+              "type": "string",
+              "value": "={{ ($json.data || [])[0]?.id || $('Happ API · транскрипт дзвінка').item.json.dynamicVariables?.lead_id || '' }}"
+            },
+            {
+              "id": "a6",
+              "name": "score",
+              "type": "string",
+              "value": "={{ ($json.data || [])[0]?.score_AI ?? '' }}"
+            },
+            {
+              "id": "a7",
+              "name": "status",
+              "type": "string",
+              "value": "={{ ($json.data || [])[0]?.Lead_Status ?? '' }}"
+            },
+            {
+              "id": "a8",
+              "name": "score_comment",
+              "type": "string",
+              "value": "={{ ($json.data || [])[0]?.SCORE_COMMENT ?? '' }}"
+            },
+            {
+              "id": "a9",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ $('Happ API · транскрипт дзвінка').item.json.transcriptText || ($('Happ API · транскрипт дзвінка').item.json.replies || []).map(r => (r.speaker || r.role) + ': ' + (r.text || r.message)).join('\\n') }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "08754e76-fee1-4d24-b71b-25bf85251d36",
+      "name": "AI-аналітик голосових розмов",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1568,
+        112
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Дзвінок {{ $json.call_id }} від {{ $json.call_date }}, тривалість {{ $json.duration }} с, телефон {{ $json.phone }}.\nЛід у CRM: {{ $json.lead_id || \"не привʼязаний\" }}, score {{ $json.score }}, статус {{ $json.status }}.\nРозрахунок score: {{ $json.score_comment }}\n\nТранскрипт:\n{{ $json.transcript }}",
+        "options": {
+          "systemMessage": "Ти — QA-аналітик голосових продажів GrowthLab. Аналізуєш транскрипти вихідних кваліфікаційних дзвінків голосового AI-агента GrowthLab (BANT: потреба й обсяг заявок, терміни, хто ухвалює рішення, бюджет; пакети Старт від $1 500, Ріст від $3 500, Enterprise від $7 000).\n\nЕталон голосового агента: перевіряє, чи зручно говорити; одне коротке питання за раз; віддзеркалює відповідь; не читає списків і довгих монологів; числа вимовляє словами; не перебиває; відпрацьовує заперечення; наприкінці підсумовує і домовляється про дзвінок менеджера; не називає балів; чесно каже, що він AI, якщо спитали.\n\nВизнач: 1) помилки агента з короткими цитатами (довгі репліки, кілька питань разом, пропущені BANT-пункти, перебивання, невідпрацьовані заперечення, не домовився про наступний крок, розбіжність score у CRM з розмовою); 2) проблему клієнта; 3) заперечення і якість відпрацювання; 4) успішний патерн; 5) конкретну правку до промпту голосового агента; 6) оцінку розмови 1–10. Спирайся лише на транскрипт, нічого не вигадуй; якщо транскрипт порожній — помилки «транскрипт порожній», оцінка 0. Пиши українською, кожне поле до 300 символів. Обовʼязково виклич save_call_analysis рівно один раз, потім відповідай словом «збережено»."
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "0d123bc7-676c-4a5e-9708-0e941da975c8",
+      "name": "OpenAI gpt-5-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1584,
+        336
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "id": "6f9b1afc-8a83-40cf-9034-6f4454987cb5",
+      "name": "save_call_analysis",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1712,
+        336
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Записує аналіз одного голосового дзвінка в Google Sheets (рядок оновлюється за Call ID). Виклич рівно один раз.",
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "GrowthLab — AI Sales Ecosystem (аналіз діалогів)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Аналіз дзвінків"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Call ID"
+          ],
+          "value": {
+            "Дата аналізу": "={{ $now.setZone('Europe/Kyiv').toFormat('yyyy-MM-dd HH:mm') }}",
+            "Call ID": "={{ $json.call_id }}",
+            "Дата дзвінка": "={{ $json.call_date }}",
+            "Тривалість, с": "={{ $json.duration }}",
+            "Телефон": "={{ $json.phone }}",
+            "Lead ID": "={{ $json.lead_id }}",
+            "Score": "={{ $json.score }}",
+            "Статус ліда": "={{ $json.status }}",
+            "Оцінка розмови (1-10)": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('call_rating', 'Оцінка роботи голосового агента від 1 до 10', 'number') }}",
+            "Помилки агента": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('agent_errors', 'Конкретні помилки агента з короткими цитатами через \"; \" або \"немає\"') }}",
+            "Проблема клієнта": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('client_problem', 'Головний біль клієнта одним-двома реченнями') }}",
+            "Заперечення": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('objections', 'Заперечення і чи відпрацював їх агент, або \"немає\"') }}",
+            "Успішний патерн": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('success_pattern', 'Що агент зробив добре') }}",
+            "Рекомендація для промпту": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('prompt_recommendation', 'Конкретна правка до промпту голосового агента') }}"
+          },
+          "schema": [
+            {
+              "id": "Дата аналізу",
+              "displayName": "Дата аналізу",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Дата дзвінка",
+              "displayName": "Дата дзвінка",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Тривалість, с",
+              "displayName": "Тривалість, с",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Телефон",
+              "displayName": "Телефон",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Статус ліда",
+              "displayName": "Статус ліда",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Оцінка розмови (1-10)",
+              "displayName": "Оцінка розмови (1-10)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Помилки агента",
+              "displayName": "Помилки агента",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Проблема клієнта",
+              "displayName": "Проблема клієнта",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Заперечення",
+              "displayName": "Заперечення",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Успішний патерн",
+              "displayName": "Успішний патерн",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Рекомендація для промпту",
+              "displayName": "Рекомендація для промпту",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "d8d534cb-3abf-4ddb-90e6-20d97ad29c25",
+      "name": "Loop Over Calls",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        112
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "da51ac16-979a-464e-b079-f2ee13721078",
+      "name": "Sticky Note 0ad81d0a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        520
+      ],
+      "parameters": {
+        "content": "## V4 · Щоденний AI-аналіз голосових розмов\nSchedule 09:15 → **Happ API** `/calls-history` (статус transcribed, за добу) → Loop → транскрипт дзвінка → лід у Zoho (score, статус) → AI-аналітик → **Google Sheets** «Аналіз дзвінків» (upsert за Call ID). Звідси WF3 бере дані для звіту CEO.",
+        "color": 5,
+        "width": 1060,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Щодня о 09:15": {
+      "main": [
+        [
+          {
+            "node": "Happ API · дзвінки за добу",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Happ API · дзвінки за добу": {
+      "main": [
+        [
+          {
+            "node": "Кожен дзвінок окремо",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Кожен дзвінок окремо": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Calls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Happ API · транскрипт дзвінка": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · лід (lead_id або Skype_ID)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Дзвінок для аналізу": {
+      "main": [
+        [
+          {
+            "node": "AI-аналітик голосових розмов",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI-аналітик голосових розмов": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Calls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI gpt-5-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI-аналітик голосових розмов",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "save_call_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI-аналітик голосових розмов",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Calls": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Happ API · транскрипт дзвінка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · лід (lead_id або Skype_ID)": {
+      "main": [
+        [
+          {
+            "node": "Дзвінок для аналізу",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

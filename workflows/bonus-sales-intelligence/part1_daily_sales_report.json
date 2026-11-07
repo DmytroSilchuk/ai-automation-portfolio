@@ -1,0 +1,243 @@
+{
+  "name": "Sales Intelligence · Part 1 · AI Sales Reporting (щоденний звіт)",
+  "description": "щодня о 09:00 бере угоди з Zoho CRM, агрегує воронку, AI-агент через Tool Get Deal аналізує проблемні угоди і надсилає HTML-звіт у Telegram.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "97e2beed-6047-4683-92f1-abd88106ed61",
+      "name": "Щодня о 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "55e0d458-a308-46ee-a0a8-a05fcaf9642e",
+      "name": "Zoho CRM: всі угоди",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "resource": "deal",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "Deal_Name",
+            "Stage",
+            "Amount",
+            "Closing_Date",
+            "Probability",
+            "Next_Step"
+          ]
+        }
+      }
+    },
+    {
+      "id": "e4aff4bb-c2f2-4762-9414-1a53a6ef07a8",
+      "name": "Агрегація воронки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Агрегація воронки продажів для AI-звіту (Run Once for All Items)\nconst deals = $input.all().map(i => i.json);\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\n\nconst CLOSED = ['Closed Won', 'Closed Lost', 'Closed Lost to Competition'];\nconst LATE_STAGES = ['Proposal/Price Quote', 'Negotiation/Review'];\nconst STAGE_ORDER = ['Qualification', 'Needs Analysis', 'Value Proposition', 'Identify Decision Makers',\n  'Proposal/Price Quote', 'Negotiation/Review', 'Closed Won', 'Closed Lost', 'Closed Lost to Competition'];\n\nconst byStage = {};\nlet totalPipeline = 0;\nlet atRiskAmount = 0;\nconst problemDeals = [];\n\nfor (const d of deals) {\n  const stage = d.Stage || 'Unknown';\n  const amount = Number(d.Amount) || 0;\n  if (!byStage[stage]) byStage[stage] = { stage, count: 0, amount: 0 };\n  byStage[stage].count += 1;\n  byStage[stage].amount += amount;\n\n  if (CLOSED.includes(stage)) continue;\n  totalPipeline += amount;\n\n  // Сигнали ризику — тільки прапорці, без деталей: деталі агент отримує через Tool\n  const flags = [];\n  let daysOverdue = 0;\n  if (d.Closing_Date) {\n    const close = new Date(d.Closing_Date);\n    daysOverdue = Math.floor((today - close) / 86400000);\n    if (daysOverdue > 0) flags.push(`дата закриття прострочена на ${daysOverdue} дн.`);\n  }\n  if (!d.Next_Step) flags.push('не вказано наступний крок');\n  if (LATE_STAGES.includes(stage) && (Number(d.Probability) || 0) <= 50) flags.push('низька ймовірність на пізній стадії');\n\n  if (flags.length) {\n    atRiskAmount += amount;\n    problemDeals.push({ deal_id: d.id, deal_name: d.Deal_Name, stage, amount, flags });\n  }\n}\n\nconst stages = Object.values(byStage).sort((a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage));\n\nreturn [{\n  json: {\n    report_date: today.toISOString().slice(0, 10),\n    total_deals: deals.length,\n    open_deals: deals.filter(d => !CLOSED.includes(d.Stage)).length,\n    total_pipeline: totalPipeline,\n    at_risk_amount: atRiskAmount,\n    currency: 'UAH',\n    stages,\n    problem_deals: problemDeals.sort((a, b) => b.amount - a.amount),\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "114aff97-513a-44b4-9d57-8a8bb16534a7",
+      "name": "AI Sales Analyst",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Дані воронки на сьогодні:\n{{ JSON.stringify($json, null, 2) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Ти — AI-аналітик відділу продажів B2B-компанії. Щоранку ти готуєш для керівника відділу продажів короткий звіт по воронці в Zoho CRM.\n\nВХІДНІ ДАНІ\nУ повідомленні користувача ти отримуєш JSON з агрегатами воронки: дата звіту, кількість угод і суми по стадіях, загальна сума відкритої воронки, сума під ризиком і список problem_deals. Для кожної проблемної угоди є тільки deal_id, назва, стадія, сума та прапорці ризику (flags). Деталей угоди у вхідних даних немає.\n\nІНСТРУМЕНТ\nGet Deal — повертає повну картку угоди з Zoho CRM: опис (Description), наступний крок (Next_Step), ймовірність (Probability), дату закриття (Closing_Date), джерело, тип угоди. Параметр: deal_id.\n\nАЛГОРИТМ\n1. Проаналізуй агрегати: де зосереджені гроші, на якій стадії найбільше угод з ризиками.\n2. Для КОЖНОЇ угоди зі списку problem_deals виклич Get Deal з її deal_id. Не викликай інструмент для угод, яких немає у списку.\n3. На основі картки угоди визнач:\n   - risk_level: \"high\" — прострочена дата закриття на пізній стадії, клієнт не відповідає, заморожений бюджет або втрачена ЛПР; \"medium\" — решта ризиків;\n   - problem: одне речення з конкретними фактами з картки (що сталося і з якого часу);\n   - recommendation: одна конкретна дія на найближчі 1–2 дні (що зробити, з ким, до якого терміну).\n4. bottleneck_stage — стадія, де зависає найбільша сума проблемних угод.\n5. top_actions — 3 найважливіші дії для відділу на сьогодні, від найбільшої суми до найменшої.\n\nПРАВИЛА\n- Пиши українською, коротко і по суті, без води.\n- Використовуй тільки факти з вхідних даних і відповідей Get Deal. Нічого не вигадуй.\n- Суми повертай числами без пробілів і валюти. У headline не пиши суми цифрами — тільки відсотки, кількість угод і стадії.\n- Не використовуй HTML чи Markdown у текстових полях.\n- Відсортуй problem_deals: спочатку high, всередині — за сумою за спаданням.\n",
+          "maxIterations": 20
+        }
+      }
+    },
+    {
+      "id": "904769b4-d295-477e-ac24-917f9e5f459c",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        540
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "timeout": 240000,
+          "reasoningEffort": "low"
+        }
+      }
+    },
+    {
+      "id": "058c242d-c7dc-4ec5-a44e-ee021b6ee195",
+      "name": "Get Deal",
+      "type": "n8n-nodes-base.zohoCrmTool",
+      "typeVersion": 1,
+      "position": [
+        720,
+        540
+      ],
+      "parameters": {
+        "resource": "deal",
+        "operation": "get",
+        "dealId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('deal_id', 'Zoho CRM ID угоди (поле deal_id зі списку problem_deals)') }}"
+      }
+    },
+    {
+      "id": "4c84970c-a2eb-49cb-bdc0-06e9abe68143",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        880,
+        540
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"headline\": {\n      \"type\": \"string\",\n      \"description\": \"1-2 речення: загальний стан воронки сьогодні\"\n    },\n    \"bottleneck_stage\": {\n      \"type\": \"string\",\n      \"description\": \"Стадія, де зависає найбільша сума проблемних угод\"\n    },\n    \"problem_deals\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"deal_id\": { \"type\": \"string\" },\n          \"deal_name\": { \"type\": \"string\" },\n          \"stage\": { \"type\": \"string\" },\n          \"amount\": { \"type\": \"number\" },\n          \"risk_level\": { \"type\": \"string\", \"enum\": [\"high\", \"medium\"] },\n          \"problem\": { \"type\": \"string\" },\n          \"recommendation\": { \"type\": \"string\" }\n        },\n        \"required\": [\"deal_id\", \"deal_name\", \"stage\", \"amount\", \"risk_level\", \"problem\", \"recommendation\"]\n      }\n    },\n    \"top_actions\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" },\n      \"minItems\": 3,\n      \"maxItems\": 3\n    }\n  },\n  \"required\": [\"headline\", \"bottleneck_stage\", \"problem_deals\", \"top_actions\"]\n}\n"
+      }
+    },
+    {
+      "id": "0a510608-1c9c-4ed9-890a-0b0df3d18706",
+      "name": "Telegram: звіт",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ (() => {\n  const d = $('Агрегація воронки').first().json;\n  const o = $json.output;\n  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const money = n => String(Math.round(Number(n) || 0)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ') + ' грн';\n  const pct = d.total_pipeline ? Math.round(d.at_risk_amount / d.total_pipeline * 100) : 0;\n  const lines = [];\n  lines.push('📊 <b>ЩОДЕННИЙ ЗВІТ ПО ВОРОНЦІ</b>');\n  lines.push('📅 ' + d.report_date.split('-').reverse().join('.'));\n  lines.push('');\n  lines.push(esc(o.headline));\n  lines.push('');\n  lines.push('<b>💼 Угоди по стадіях</b> (усього ' + d.total_deals + ')');\n  d.stages.forEach(s => lines.push('• ' + esc(s.stage) + ' — <b>' + s.count + '</b> · ' + money(s.amount)));\n  lines.push('');\n  lines.push('<b>💰 Гроші</b>');\n  lines.push('Відкрита воронка: <b>' + money(d.total_pipeline) + '</b> (' + d.open_deals + ' угод)');\n  lines.push('⚠️ Під ризиком: <b>' + money(d.at_risk_amount) + '</b> (' + pct + '%)');\n  lines.push('🔻 Вузьке місце: <b>' + esc(o.bottleneck_stage) + '</b>');\n  lines.push('');\n  lines.push('<b>🚨 Проблемні угоди (' + o.problem_deals.length + ')</b>');\n  o.problem_deals.forEach(p => {\n    lines.push('');\n    lines.push((p.risk_level === 'high' ? '🔴 ' : '🟡 ') + '<a href=\"https://crm.zoho.eu/crm/tab/Potentials/' + p.deal_id + '\">' + esc(p.deal_name) + '</a>');\n    lines.push('<i>' + esc(p.stage) + ' · ' + money(p.amount) + '</i>');\n    lines.push('Проблема: ' + esc(p.problem));\n    lines.push('👉 ' + esc(p.recommendation));\n  });\n  lines.push('');\n  lines.push('<b>✅ Що зробити сьогодні</b>');\n  o.top_actions.forEach((a, i) => lines.push((i + 1) + '. ' + esc(a)));\n  return lines.join('\\n');\n})() }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Щодня о 09:00": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM: всі угоди",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM: всі угоди": {
+      "main": [
+        [
+          {
+            "node": "Агрегація воронки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Агрегація воронки": {
+      "main": [
+        [
+          {
+            "node": "AI Sales Analyst",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Sales Analyst": {
+      "main": [
+        [
+          {
+            "node": "Telegram: звіт",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Sales Analyst",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Deal": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Sales Analyst",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Sales Analyst",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Kyiv"
+  },
+  "nodeGroups": []
+}

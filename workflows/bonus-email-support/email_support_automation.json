@@ -1,0 +1,757 @@
+{
+  "name": "HouseBox — Email Support Automation",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "to:you@example.com -label:housebox-p1-p2-ескалація -label:housebox-p3-автовідповідь -label:housebox-p4-низький-пріоритет -label:housebox-потребує-людини",
+          "readStatus": "both"
+        },
+        "options": {}
+      },
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "notes": "1. ТРИГЕР: щохвилини нові листи на you@example.com",
+      "notesInFlow": true,
+      "id": "hbx-node-00"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1",
+              "leftValue": "={{ $json.from?.value?.[0]?.address ?? '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              },
+              "rightValue": "noreply"
+            },
+            {
+              "id": "f2",
+              "leftValue": "={{ $json.from?.value?.[0]?.address ?? '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              },
+              "rightValue": "no-reply"
+            },
+            {
+              "id": "f3",
+              "leftValue": "={{ $json.from?.value?.[0]?.address ?? '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              },
+              "rightValue": "mailer-daemon"
+            },
+            {
+              "id": "f4",
+              "leftValue": "={{ ($json.subject ?? '') + ' ' + ($json.text ?? '').slice(-400) }}",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              },
+              "rightValue": "unsubscribe"
+            },
+            {
+              "id": "f5",
+              "leftValue": "={{ ($json.text ?? '').trim().length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Фільтр: справжні клієнти",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        300
+      ],
+      "notes": "2. ФІЛЬТР: відсікає no-reply, розсилки, порожні листи",
+      "notesInFlow": true,
+      "id": "hbx-node-01"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ти — старший менеджер підтримки інтернет-магазину товарів для дому HouseBox (Україна). Клієнти — люди, які купують посуд, текстиль, декор, органайзери та дрібну техніку для дому; більшість пише після оплати, коли чекає на доставку.\n\nТВОЄ ЗАВДАННЯ\nПрочитати лист клієнта, класифікувати його і написати чернетку відповіді від імені команди HouseBox.\n\nТОН\n- Українською, на «ви», тепло і по-людськи, але по суті. 2–4 речення.\n- Спочатку відповідь на питання, потім наступний крок для клієнта.\n- Якщо клієнт засмучений — одне коротке речення співчуття своїми словами, без шаблонів.\n- Підпис завжди: «Команда підтримки HouseBox».\n- Заборонені слова і звороти: «оперативно», «максимально», «будемо раді», «вибачте за незручності», «ваш запит дуже важливий для нас».\n\nБАЗА ЗНАНЬ HOUSEBOX (використовуй лише ці факти)\n- Доставка: Нова пошта, відділення або поштомат, 1–3 робочі дні по Україні. Замовлення, оплачені до 14:00, відправляємо того ж робочого дня. Безкоштовна доставка від 1500 грн.\n- Номер ТТН надходить клієнту SMS та e-mail у день відправлення; відстежити посилку можна на сайті або в застосунку Нової пошти.\n- Повернення та обмін: 14 днів з дня отримання, товар без слідів використання, в оригінальному пакуванні. Заявка — відповіддю на цей лист із номером замовлення. Кошти повертаємо на картку протягом 3–5 робочих днів після отримання товару на складі. Доставку при поверненні оплачує клієнт, крім випадків браку.\n- Брак або пошкодження: потрібні номер замовлення і фото товару та упаковки; рішення (заміна або повернення коштів) приймає менеджер.\n- Оплата: картка на сайті, Apple Pay / Google Pay, накладений платіж (комісія Нової пошти за переказ сплачує клієнт).\n- Графік підтримки: пн–пт 9:00–19:00, сб 10:00–16:00.\n- Ти НЕ маєш доступу до бази замовлень і статусів ТТН.\n\nЗАБОРОНЕНО\n- Вигадувати статус, місцезнаходження або дату доставки конкретного замовлення.\n- Обіцяти знижки, компенсації, промокоди, безкоштовну доставку поза правилами.\n- Визнавати юридичну провину магазину або коментувати погрози судом.\n- Просити дані картки, CVV, паролі.\n\nКАТЕГОРІЇ (category — рівно одне значення)\n- \"доставка\" — де замовлення, коли доставка, ТТН, терміни, відділення.\n- \"повернення\" — повернення, обмін, повернення коштів за неякісний чи непотрібний товар.\n- \"оплата\" — способи оплати, подвійне списання, не пройшла оплата, рахунок, накладений платіж.\n- \"брак\" — товар прийшов пошкодженим, бракованим, не той товар або неповний комплект.\n- \"товар\" — питання про характеристики, наявність, розміри, догляд, підбір.\n- \"інше\" — подяки, відгуки, співпраця, реклама, спам, нерелевантне.\n\nПРІОРИТЕТИ (priority)\n- \"P1\" — критично: згадка юриста, суду, Держпродспоживслужби, захисту прав споживачів, поліції; погроза публічним скандалом у ЗМІ; гроші списано, а замовлення немає; подвійне списання; запит повернути гроші через банк (chargeback).\n- \"P2\" — серйозно: товар пошкоджений, бракований або не той; посилка загубилась; затримка понад 5 днів від обіцяного терміну; агресивний тон, лайка; клієнт пише повторно, бо йому не відповіли.\n- \"P3\" — звичайно: інформаційне питання, на яке можна відповісти з бази знань (терміни доставки, як відстежити ТТН, умови повернення, способи оплати, питання про товар); питання про статус конкретного замовлення без ознак проблеми.\n- \"P4\" — неважливо: подяка, позитивний відгук, нерелевантне звернення, реклама, пропозиції співпраці, спам.\nЯкщо підходять кілька пріоритетів — став найвищий (P1 вищий за P2).\nВАЖЛИВО: звичайне повернення чи обмін товару належної якості (не підійшов колір, розмір, передумав) у спокійному тоні — це P3 з requires_human = true, а НЕ P2. P2 — лише брак/пошкодження, загублена посилка, сильна затримка, агресія або повторне звернення.\n\nТОНАЛЬНІСТЬ (sentiment)\n- \"positive\" — подяка, задоволення.\n- \"neutral\" — спокійне питання.\n- \"negative\" — невдоволення, тривога, злість, погрози.\n\nREQUIRES_HUMAN\nСтав true, якщо виконується хоча б одне:\n- priority P1 або P2;\n- для відповіді потрібні дані конкретного замовлення (статус, ТТН, дата відправлення, сума);\n- клієнт просить оформити повернення, обмін, заміну або повернення коштів;\n- питання не покрите базою знань.\nІнакше — false. Для P4 — false.\n\nВІДПОВІДЬ (suggested_response)\n- Для P3 без потреби в людині: повна відповідь з бази знань, яку можна надіслати клієнту одразу.\n- Для випадків requires_human = true: чернетка для менеджера — підтвердь, що звернення отримано, попроси лише ті дані, яких бракує (номер замовлення — якщо його немає в листі; фото — тільки при браку чи пошкодженні), скажи, що менеджер відповість протягом робочого дня. Нічого не обіцяй по суті. Для повернення належної якості коротко нагадай умови (14 днів, без слідів використання, оригінальне пакування).\n- Для P4: коротка ввічлива відповідь на подяку чи відгук. Для спаму, реклами, SEO та пропозицій співпраці — СТРОГО порожній рядок \"\" (на спам не відповідаємо).\n- Пиши від імені команди у множині («ми раді», «ми перевіримо»), ніколи в однині («я радий»).\n- Звертайся на ім'я, лише якщо клієнт підписався.\n- ОБОВ'ЯЗКОВО: кожна непорожня відповідь закінчується двома переносами рядка і підписом «Команда підтримки HouseBox». Приклад кінця: \"...протягом робочого дня.\\n\\nКоманда підтримки HouseBox\"\n\nФОРМАТ ВИХОДУ\nПоверни ВИКЛЮЧНО валідний JSON-об'єкт, без markdown, без ``` і без тексту поза JSON:\n{\n  \"priority\": \"P1\" | \"P2\" | \"P3\" | \"P4\",\n  \"category\": \"доставка\" | \"повернення\" | \"оплата\" | \"брак\" | \"товар\" | \"інше\",\n  \"sentiment\": \"positive\" | \"neutral\" | \"negative\",\n  \"requires_human\": true | false,\n  \"escalation_reason\": \"коротко, чому потрібна людина, або порожній рядок\",\n  \"order_number\": \"номер замовлення з листа або порожній рядок\",\n  \"suggested_response\": \"текст відповіді\"\n}\nНічого не вигадуй. Якщо поле неможливо визначити — обери найближче значення з переліку.\n"
+            },
+            {
+              "content": "=Тема: {{ $json.subject }}\nВід: {{ $json.from.text }}\n\nТекст листа:\n{{ ($json.text ?? '').slice(0, 4000) }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "name": "AI-класифікатор (OpenAI)",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        440,
+        300
+      ],
+      "notes": "3. AI: пріоритет, категорія, тональність, відповідь (JSON)",
+      "notesInFlow": true,
+      "id": "hbx-node-02"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Парсимо JSON від моделі + збагачуємо даними листа (для КОЖНОГО листа окремо)\nconst ai = $json.message?.content ?? $json.content ?? $json.text;\nconst email = $('Gmail Trigger').item.json;\n\nconst ALLOWED = {\n  priority: ['P1', 'P2', 'P3', 'P4'],\n  category: ['доставка', 'повернення', 'оплата', 'брак', 'товар', 'інше'],\n  sentiment: ['positive', 'neutral', 'negative'],\n};\n\nlet parsed;\nlet parseError = false;\ntry {\n  parsed = typeof ai === 'string'\n    ? JSON.parse(ai.replace(/^```(json)?/i, '').replace(/```$/, '').trim())\n    : ai;\n  if (!parsed || typeof parsed !== 'object') throw new Error('empty');\n} catch (e) {\n  parseError = true;\n  parsed = {};\n}\n\n// Безпечні значення за замовчуванням: щось незрозуміле -> людина\nconst priority = ALLOWED.priority.includes(parsed.priority) ? parsed.priority : 'P2';\nconst category = ALLOWED.category.includes(parsed.category) ? parsed.category : 'інше';\nconst sentiment = ALLOWED.sentiment.includes(parsed.sentiment) ? parsed.sentiment : 'neutral';\nlet requiresHuman = parsed.requires_human === true || parsed.requires_human === 'true' || parseError;\nif (['P1', 'P2'].includes(priority)) requiresHuman = true;   // жорстке правило ескалації\n\nconst action = ['P1', 'P2'].includes(priority) ? 'draft-escalation'\n  : priority === 'P3' && !requiresHuman ? 'auto-reply'\n  : priority === 'P3' ? 'draft-needs-human'\n  : 'label-only';\n\n// Страховка: підпис бренду, якщо модель його забула (ітерація 1)\nconst SIGNATURE = 'Команда підтримки HouseBox';\nlet reply = typeof parsed.suggested_response === 'string' ? parsed.suggested_response.trim() : '';\nif (reply && !reply.includes(SIGNATURE)) reply += '\\n\\n' + SIGNATURE;\nif (reply) parsed.suggested_response = reply;\n\nconst from = email.from?.value?.[0] ?? {};\nreturn {\n  json: {\n    email_id: email.id,\n    thread_id: email.threadId,\n    received_at: new Date(email.date ?? Date.now()).toISOString(),\n    from_email: from.address ?? '',\n    from_name: from.name ?? '',\n    subject: email.subject ?? '(без теми)',\n    priority,\n    category,\n    sentiment,\n    requires_human: requiresHuman,\n    action,\n    escalation_reason: parsed.escalation_reason ?? (parseError ? 'AI повернув невалідний JSON' : ''),\n    order_number: parsed.order_number ?? '',\n    suggested_response: parsed.suggested_response ??\n      'Дякуємо за звернення! Менеджер HouseBox відповість вам протягом робочого дня.\\n\\nКоманда підтримки HouseBox',\n    parse_error: parseError,\n  },\n};"
+      },
+      "name": "Парсер + збагачення",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Валідує JSON, fallback → людина, додає дані листа",
+      "notesInFlow": true,
+      "id": "hbx-node-03"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s1",
+                    "leftValue": "={{ $json.priority }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "^P[12]$"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "P1/P2 — ескалація"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s2",
+                    "leftValue": "={{ $json.priority }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "P3"
+                  },
+                  {
+                    "id": "s3",
+                    "leftValue": "={{ $json.requires_human }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "P3 — автовідповідь"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s4",
+                    "leftValue": "={{ $json.priority }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "P3"
+                  },
+                  {
+                    "id": "s5",
+                    "leftValue": "={{ $json.requires_human }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "P3 — потрібна людина"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s6",
+                    "leftValue": "={{ $json.priority }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "P4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "P4 — лише мітка"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Інше — людина"
+        }
+      },
+      "name": "Маршрутизатор (Switch)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "4. МАРШРУТИЗАТОР за пріоритетом",
+      "notesInFlow": true,
+      "id": "hbx-node-04"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.suggested_response }}",
+        "options": {
+          "threadId": "={{ $json.thread_id }}",
+          "sendTo": "={{ $json.from_email }}"
+        }
+      },
+      "name": "Чернетка: ескалація",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        0
+      ],
+      "notes": "P1/P2: лише чернетка, надсилає людина",
+      "notesInFlow": true,
+      "id": "hbx-node-05"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "labelIds": [
+          "Label_12"
+        ]
+      },
+      "name": "Мітка: Ескалація",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1380,
+        0
+      ],
+      "id": "hbx-node-06"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "name": "Wait 30s (буфер)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1160,
+        200
+      ],
+      "notes": "Пауза, щоб відповідь не виглядала як бот/спам",
+      "notesInFlow": true,
+      "id": "hbx-node-07"
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "emailType": "text",
+        "message": "={{ $('Парсер + збагачення').item.json.suggested_response }}",
+        "options": {
+          "appendAttribution": false,
+          "replyToSenderOnly": true
+        }
+      },
+      "name": "Автовідповідь клієнту",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1380,
+        200
+      ],
+      "id": "hbx-node-08"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "labelIds": [
+          "Label_13"
+        ]
+      },
+      "name": "Мітка: Автовідповідь",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1600,
+        200
+      ],
+      "id": "hbx-node-09"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.suggested_response }}",
+        "options": {
+          "threadId": "={{ $json.thread_id }}",
+          "sendTo": "={{ $json.from_email }}"
+        }
+      },
+      "name": "Чернетка: потрібна людина",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        400
+      ],
+      "notes": "P3 з даними замовлення/поверненням",
+      "notesInFlow": true,
+      "id": "hbx-node-10"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "labelIds": [
+          "Label_15"
+        ]
+      },
+      "name": "Мітка: Потребує людини",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1380,
+        400
+      ],
+      "id": "hbx-node-11"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "labelIds": [
+          "Label_14"
+        ]
+      },
+      "name": "Мітка: P4",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        600
+      ],
+      "id": "hbx-node-12"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Парсер + збагачення').item.json.email_id }}",
+        "labelIds": [
+          "Label_15"
+        ]
+      },
+      "name": "Мітка: Інше → людина",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1160,
+        800
+      ],
+      "id": "hbx-node-13"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1k6ypSqBFD1dRFXTI2i_btTBqGsVPXu3V6hHNHUaLRrE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email_id": "={{ $json.email_id }}",
+            "received_at": "={{ $json.received_at }}",
+            "from": "={{ $json.from_email }}",
+            "subject": "={{ $json.subject }}",
+            "priority": "={{ $json.priority }}",
+            "category": "={{ $json.category }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "requires_human": "={{ $json.requires_human }}",
+            "action": "={{ $json.action }}",
+            "suggested_response": "={{ $json.suggested_response }}",
+            "escalation_reason": "={{ $json.escalation_reason }}",
+            "order_number": "={{ $json.order_number }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "email_id",
+              "displayName": "email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "from",
+              "displayName": "from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "requires_human",
+              "displayName": "requires_human",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suggested_response",
+              "displayName": "suggested_response",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalation_reason",
+              "displayName": "escalation_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "order_number",
+              "displayName": "order_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Лог у Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        900,
+        600
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "5. ЛОГ кожного листа для аналітики",
+      "notesInFlow": true,
+      "id": "hbx-node-14"
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Фільтр: справжні клієнти",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Фільтр: справжні клієнти": {
+      "main": [
+        [
+          {
+            "node": "AI-класифікатор (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "AI-класифікатор (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "Парсер + збагачення",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Парсер + збагачення": {
+      "main": [
+        [
+          {
+            "node": "Маршрутизатор (Switch)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Лог у Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Маршрутизатор (Switch)": {
+      "main": [
+        [
+          {
+            "node": "Чернетка: ескалація",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 30s (буфер)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Чернетка: потрібна людина",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Мітка: P4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Мітка: Інше → людина",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Чернетка: ескалація": {
+      "main": [
+        [
+          {
+            "node": "Мітка: Ескалація",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30s (буфер)": {
+      "main": [
+        [
+          {
+            "node": "Автовідповідь клієнту",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Автовідповідь клієнту": {
+      "main": [
+        [
+          {
+            "node": "Мітка: Автовідповідь",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Чернетка: потрібна людина": {
+      "main": [
+        [
+          {
+            "node": "Мітка: Потребує людини",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "Europe/Kyiv",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

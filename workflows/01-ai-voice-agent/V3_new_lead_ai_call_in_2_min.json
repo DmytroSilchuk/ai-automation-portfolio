@@ -1,0 +1,345 @@
+{
+  "name": "GrowthLab V3 · Новий лід у CRM → AI-дзвінок через 2 хв (Happ API)",
+  "description": "вебхук із Zoho на новий лід → пауза 2 хв → перевірка телефону/робочого часу → Happ API originate (голосовий BANT-агент) → статус у CRM; помилки пишуться в AI_Next_Action.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "15c5597e-fd13-4261-9b8f-f3a6e8e85cb4",
+      "name": "Zoho CRM webhook · новий лід",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "growthlab-new-lead",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "26c3f184-3948-4c0f-af7a-6dc73f3ae6de",
+      "name": "ID ліда",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "l1",
+              "name": "lead_id",
+              "type": "string",
+              "value": "={{ String($json.body?.lead_id ?? $json.body?.id ?? $json.query?.lead_id ?? $json.query?.id ?? '').trim() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d8fdb71c-e5ca-4567-bb59-f1b09fae7764",
+      "name": "Пауза 2 хвилини",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 2,
+        "unit": "minutes"
+      }
+    },
+    {
+      "id": "93f93299-1b2a-46c0-9acc-4ae2060b9381",
+      "name": "Zoho CRM · дані ліда",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "get",
+        "leadId": "={{ $json.lead_id }}"
+      }
+    },
+    {
+      "id": "892729d3-4b08-40b3-bae3-32287b96cb70",
+      "name": "Номер +380 і робочий час 09-19?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ /^380\\d{9}$/.test(String($json.Phone || $json.Mobile || '').replace(/\\D/g, '').replace(/^0(\\d{9})$/, '380$1').replace(/^80(\\d{9})$/, '380$1')) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            },
+            {
+              "leftValue": "={{ $now.setZone('Europe/Kyiv').hour >= 9 && $now.setZone('Europe/Kyiv').hour < 19 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e732aa31-697d-4804-8d9a-2f3610dd6221",
+      "name": "Happ API · запустити дзвінок",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1340,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.happ.tools/api/assistants/YOUR_HAPP_ASSISTANT_ID/originate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ phoneNumber: '+' + String($json.Phone || $json.Mobile || '').replace(/\\D/g, '').replace(/^0(\\d{9})$/, '380$1').replace(/^80(\\d{9})$/, '380$1'), dynamicVariables: { name: $json.First_Name || '', name_greeting: $json.First_Name ? ', ' + $json.First_Name : '', company: $json.Company || '', lead_id: $json.id } }) }}",
+        "options": {}
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "2a7add7b-9611-4cab-aef3-5b71dd2a9076",
+      "name": "Zoho · статус «дзвінок ініційовано»",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "update",
+        "leadId": "={{ $('Поля ліда').item.json.id }}",
+        "updateFields": {
+          "Lead_Status": "Attempted to Contact",
+          "customFields": {
+            "customFields": [
+              {
+                "fieldId": "AI_Next_Action",
+                "value": "=AI-дзвінок ініційовано {{ $now.setZone('Europe/Kyiv').toFormat('dd.MM HH:mm') }} — чекаємо postcall"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1061cfc8-3449-4f2e-a1f0-5d1996a417bd",
+      "name": "Zoho · некоректний номер або поза робочим часом",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        360
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "update",
+        "leadId": "={{ $json.id }}",
+        "updateFields": {
+          "customFields": {
+            "customFields": [
+              {
+                "fieldId": "AI_Next_Action",
+                "value": "={{ /^380\\d{9}$/.test(String($json.Phone || $json.Mobile || '').replace(/\\D/g, '').replace(/^0(\\d{9})$/, '380$1').replace(/^80(\\d{9})$/, '380$1')) ? 'Лід прийшов поза 09:00-19:00 — AI-дзвінок наступного робочого ранку' : 'Некоректний номер (' + ($json.Phone || $json.Mobile || 'порожньо') + ') — AI-дзвінок не запущено, уточнити номер' }}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "6ac39a36-4434-4d6e-9f85-6bcb24b8a577",
+      "name": "Zoho · помилка запуску дзвінка",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        200
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "update",
+        "leadId": "={{ $('Поля ліда').item.json.id }}",
+        "updateFields": {
+          "customFields": {
+            "customFields": [
+              {
+                "fieldId": "AI_Next_Action",
+                "value": "=AI-дзвінок НЕ запущено ({{ String($json.error?.message || $json.error || 'помилка Happ API').slice(0, 150) }}) — передзвонити вручну"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "08e6072f-4b23-4ecc-9998-d8837fb57382",
+      "name": "Sticky Note e150b05c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "content": "## V3 · Новий лід у CRM → AI-дзвінок через 2 хв\nZoho Workflow Rule (Lead created) шле вебхук → пауза **2 хв** → свіжі дані ліда → перевірка телефону й робочого часу 09-19 (Київ) → **Happ API `/originate`** з dynamicVariables (імʼя, компанія, lead_id) → статус у CRM. Помилка API не губиться: пишеться в AI_Next_Action.",
+        "color": 4,
+        "width": 1060,
+        "height": 200
+      }
+    },
+    {
+      "id": "aff841a2-9d7c-4a6f-ab1c-671fc4003767",
+      "name": "Поля ліда",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.stringify(($json.data && $json.data[0]) || $json) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Zoho CRM webhook · новий лід": {
+      "main": [
+        [
+          {
+            "node": "ID ліда",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID ліда": {
+      "main": [
+        [
+          {
+            "node": "Пауза 2 хвилини",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Пауза 2 хвилини": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · дані ліда",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Happ API · запустити дзвінок": {
+      "main": [
+        [
+          {
+            "node": "Zoho · статус «дзвінок ініційовано»",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zoho · помилка запуску дзвінка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · дані ліда": {
+      "main": [
+        [
+          {
+            "node": "Поля ліда",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Поля ліда": {
+      "main": [
+        [
+          {
+            "node": "Номер +380 і робочий час 09-19?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Номер +380 і робочий час 09-19?": {
+      "main": [
+        [
+          {
+            "node": "Happ API · запустити дзвінок",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zoho · некоректний номер або поза робочим часом",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

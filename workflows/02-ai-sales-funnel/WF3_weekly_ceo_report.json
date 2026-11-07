@@ -1,0 +1,364 @@
+{
+  "name": "GrowthLab WF3 · Моніторинг лідів і звіт CEO (пт 17:00)",
+  "description": "щоп'ятниці о 17:00 рахує метрики воронки з Zoho (Code), читає AI-аналіз діалогів із Google Sheets (WF2), AI Agent зі Structured Output формує звіт → Telegram CEO.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "6dc62fae-a489-4565-9eac-21df03e17be2",
+      "name": "Щоп’ятниці о 17:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        112
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                5
+              ],
+              "triggerAtHour": 17,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f8b07f8a-68ac-448b-b863-bbe4b8e28770",
+      "name": "Zoho CRM · всі ліди",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        224,
+        112
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "Last_Name",
+            "First_Name",
+            "Company",
+            "Lead_Status",
+            "Lead_Source",
+            "score_AI",
+            "Skype_ID",
+            "Owner",
+            "Created_Time",
+            "AI_Objections",
+            "AI_Next_Action"
+          ]
+        }
+      }
+    },
+    {
+      "id": "adb761e2-15dd-4595-94f9-b1428c46666c",
+      "name": "Метрики воронки (Code)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const leads = $input.all().map(i => i.json);\nconst weekAgo = Date.now() - 7 * 24 * 3600 * 1000;\nconst count = (arr, key) => arr.reduce((acc, x) => { const k = key(x) || 'Без статусу'; acc[k] = (acc[k] || 0) + 1; return acc; }, {});\nconst isNew = l => l.Created_Time && new Date(l.Created_Time).getTime() >= weekAgo;\nconst newLeads = leads.filter(isNew);\nconst bot = leads.filter(l => l.Lead_Source === 'Chat' && l.Skype_ID);\nconst scores = bot.map(l => Number(l.score_AI)).filter(n => !isNaN(n));\nconst avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;\nconst qualified = bot.filter(l => l.Lead_Status === 'Pre-Qualified').length;\nreturn [{ json: {\n  period: `${new Date(weekAgo).toISOString().slice(0, 10)} — ${new Date().toISOString().slice(0, 10)}`,\n  total_leads: leads.length,\n  new_leads_count: newLeads.length,\n  by_stage: count(leads, l => l.Lead_Status),\n  by_owner: count(leads, l => l.Owner && l.Owner.name),\n  by_source: count(leads, l => l.Lead_Source),\n  chatbot_leads: bot.length,\n  chatbot_avg_score: avg,\n  chatbot_qualified_rate: bot.length ? Math.round(qualified / bot.length * 100) : 0,\n  new_leads: newLeads.map(l => ({ name: [l.First_Name, l.Last_Name].filter(Boolean).join(' '), company: l.Company, status: l.Lead_Status, score: l.score_AI, owner: l.Owner && l.Owner.name, objections: l.AI_Objections, next_action: l.AI_Next_Action }))\n} }];"
+      }
+    },
+    {
+      "id": "3778e5bb-bf48-4af3-a25f-71b4f7f2865f",
+      "name": "Google Sheets · аналіз діалогів (WF2)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        672,
+        112
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "GrowthLab — AI Sales Ecosystem (аналіз діалогів)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Аналіз діалогів"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "46c58b19-ceeb-40b2-9a02-59a5a38865cb",
+      "name": "Дані для AI (CRM + Sheets)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const m = $('Метрики воронки (Code)').first().json;\nconst rows = $('Google Sheets · аналіз діалогів (WF2)').all().map(i => i.json).filter(r => r['Lead ID']);\nconst analysis = rows.map(r => ({\n  channel: 'chat', client: r['Клієнт'], company: r['Компанія'], score: r['Score'], status: r['Статус ліда'],\n  rating: r['Оцінка діалогу (1-10)'], agent_errors: r['Помилки агента'], client_problem: r['Проблема клієнта'],\n  objections: r['Заперечення'], success_pattern: r['Успішний патерн'], prompt_fix: r['Рекомендація для промпту']\n}));\nconst calls = $input.all().map(i => i.json).filter(r => r['Call ID']).map(r => ({\n  channel: 'voice', call_date: r['Дата дзвінка'], duration_sec: r['Тривалість, с'], lead_id: r['Lead ID'], score: r['Score'], status: r['Статус ліда'],\n  rating: r['Оцінка розмови (1-10)'], agent_errors: r['Помилки агента'], client_problem: r['Проблема клієнта'],\n  objections: r['Заперечення'], success_pattern: r['Успішний патерн'], prompt_fix: r['Рекомендація для промпту']\n}));\nconst all = analysis.concat(calls);\nconst ratings = all.map(a => Number(a.rating)).filter(n => !isNaN(n) && n > 0);\nreturn [{ json: { metrics: m, dialog_analysis: analysis, call_analysis: calls, analysed_dialogs: analysis.length, analysed_calls: calls.length, avg_dialog_rating: ratings.length ? +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : null } }];"
+      }
+    },
+    {
+      "id": "071aa30a-c305-43f6-9c92-0af4da41f830",
+      "name": "AI-аналітик для CEO",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1232,
+        112
+      ],
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=Дані за тиждень {{ $json.metrics.period }}.\n\nМЕТРИКИ CRM (Zoho):\n{{ JSON.stringify($json.metrics, null, 1) }}\n\nАНАЛІЗ ДІАЛОГІВ ЧАТБОТА (Google Sheets, {{ $json.analysed_dialogs }} шт.):\n{{ JSON.stringify($json.dialog_analysis, null, 1) }}\n\nАНАЛІЗ ГОЛОСОВИХ ДЗВІНКІВ AI-агента (Google Sheets, {{ $json.analysed_calls }} шт.):\n{{ JSON.stringify($json.call_analysis, null, 1) }}\n\nСередня оцінка якості розмов (чат + голос): {{ $json.avg_dialog_rating }}/10",
+        "options": {
+          "systemMessage": "Ти — директор з аналітики продажів компанії GrowthLab (агенція AI-автоматизації продажів). Щоп’ятниці готуєш для CEO короткий звіт про воронку: вхідні ліди з сайту кваліфікує AI-чатбот за BANT (score 0-100; 70+ Pre-Qualified, 40-69 Contact in Future, <40 Not Qualified), а щодня AI-аналітик оцінює якість діалогів.\n\nПравила:\n- Спирайся лише на надані цифри, нічого не вигадуй. total_leads — це вся база CRM, new_leads_count — нові за тиждень; не плутай їх.\n- Кожна проблема та рекомендація — з конкретними цифрами або назвами компаній.\n- Знайди одне головне вузьке місце воронки.\n- Для кожного менеджера з by_owner: скільки лідів, оцінка, одна дія.\n- Рекомендації — що зробити наступного тижня, одна з них — правка промпту чатбота на основі помилок з аналізу діалогів.\n\nЗвіт читають у Telegram, тому СТРОГІ ЛІМІТИ: summary — до 350 символів; bottleneck — до 250; problems — рівно 3 пункти по до 160; managers.assessment і managers.action — до 150 кожен; recommendations — рівно 4 пункти по до 180. Пиши українською, ділово, без води."
+        }
+      }
+    },
+    {
+      "id": "cb63a72b-44ab-49e2-9c77-1a51aff68609",
+      "name": "OpenAI gpt-5-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1248,
+        336
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "id": "8c57fb75-2245-49cc-aff7-8a600d843b7d",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1376,
+        336
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": { \"type\": \"string\", \"description\": \"3-4 речення для CEO: головне за тиждень з цифрами\" },\n    \"problems\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"3-5 ключових проблем із цифрами\" },\n    \"bottleneck\": { \"type\": \"string\", \"description\": \"Головне вузьке місце воронки і чому\" },\n    \"managers\": { \"type\": \"array\", \"items\": { \"type\": \"object\", \"properties\": { \"name\": { \"type\": \"string\" }, \"leads\": { \"type\": \"number\" }, \"assessment\": { \"type\": \"string\" }, \"action\": { \"type\": \"string\" } }, \"required\": [\"name\", \"leads\", \"assessment\", \"action\"] } },\n    \"recommendations\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"3-5 конкретних дій на наступний тиждень, включно з правками промпту чатбота\" }\n  },\n  \"required\": [\"summary\", \"problems\", \"bottleneck\", \"managers\", \"recommendations\"]\n}"
+      }
+    },
+    {
+      "id": "a4a5132e-b855-4b30-ad39-2df34245a6b6",
+      "name": "Формування повідомлення",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json.output;\nconst d = $('Дані для AI (CRM + Sheets)').first().json;\nconst m = d.metrics;\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst stages = Object.entries(m.by_stage).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ');\nconst list = (arr, icon) => (arr || []).map(x => `${icon} ${esc(x)}`).join('\\n');\nconst mgr = (r.managers || []).map(x => `👤 <b>${esc(x.name)}</b> (${x.leads}): ${esc(x.assessment)}\\n   → ${esc(x.action)}`).join('\\n');\nlet text = `📊 <b>GrowthLab · тижневий звіт CEO</b>\\n<i>${esc(m.period)}</i>\\n\\n` +\n  `<b>Цифри тижня</b>\\nЛідів у CRM: <b>${m.total_leads}</b> · нових за тиждень: <b>${m.new_leads_count}</b>\\nВід AI-чатбота: <b>${m.chatbot_leads}</b> · середній BANT score: <b>${m.chatbot_avg_score}</b> · Pre-Qualified: <b>${m.chatbot_qualified_rate}%</b>\\nЯкість розмов: <b>${d.avg_dialog_rating ?? '—'}/10</b> (чат ${d.analysed_dialogs} · голос ${d.analysed_calls || 0})\\nСтатуси: ${stages}\\n\\n` +\n  `<b>Головне</b>\\n${esc(r.summary)}\\n\\n<b>🚧 Вузьке місце</b>\\n${esc(r.bottleneck)}\\n\\n<b>⚠️ Проблеми</b>\\n${list(r.problems, '•')}\\n\\n<b>👥 Менеджери</b>\\n${mgr}\\n\\n<b>✅ Рекомендації на тиждень</b>\\n${list(r.recommendations, '→')}`;\nif (text.length > 4000) text = text.slice(0, 3990) + '…';\nreturn [{ json: { text } }];"
+      }
+    },
+    {
+      "id": "fd73de5d-47b0-4ea3-a33a-553b6d234f8d",
+      "name": "Telegram · звіт CEO",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1808,
+        112
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      }
+    },
+    {
+      "id": "d933a050-4f24-40e7-bbf7-f5a8ebd5d204",
+      "name": "Sticky Note eeb318d0",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -150
+      ],
+      "parameters": {
+        "content": "## WF3 · Звіт CEO щоп’ятниці 17:00\nZoho CRM → **Code**: total_leads, new_leads_count, by_stage, by_owner (+ метрики чатбота) → **Google Sheets** (аналіз діалогів із WF2) → **AI Agent + Structured Output Parser** (summary, problems, bottleneck, managers, recommendations) → **Telegram** CEO.",
+        "color": 6,
+        "width": 900,
+        "height": 200
+      }
+    },
+    {
+      "id": "1d8d41f9-6acf-4d52-9b3a-535958d6dd33",
+      "name": "Google Sheets · аналіз дзвінків (V4)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        784,
+        112
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Аналіз дзвінків"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Щоп’ятниці о 17:00": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · всі ліди",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · всі ліди": {
+      "main": [
+        [
+          {
+            "node": "Метрики воронки (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Метрики воронки (Code)": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets · аналіз діалогів (WF2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Дані для AI (CRM + Sheets)": {
+      "main": [
+        [
+          {
+            "node": "AI-аналітик для CEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI-аналітик для CEO": {
+      "main": [
+        [
+          {
+            "node": "Формування повідомлення",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI gpt-5-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI-аналітик для CEO",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI-аналітик для CEO",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Формування повідомлення": {
+      "main": [
+        [
+          {
+            "node": "Telegram · звіт CEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets · аналіз діалогів (WF2)": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets · аналіз дзвінків (V4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets · аналіз дзвінків (V4)": {
+      "main": [
+        [
+          {
+            "node": "Дані для AI (CRM + Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

@@ -1,0 +1,597 @@
+{
+  "name": "HouseBox — Звіт за період",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "start",
+              "type": "string"
+            },
+            {
+              "name": "end",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "name": "Тригер",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "id": "hbxReportPeriod01-00"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $json.start }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "e2",
+              "leftValue": "={{ $json.end }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "If start and end exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        300
+      ],
+      "id": "hbxReportPeriod01-01"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "r1",
+              "leftValue": "={{ $json.start }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "id": "r2",
+              "leftValue": "={{ $json.end }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "If dates are correct",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        200
+      ],
+      "id": "hbxReportPeriod01-02"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Помилка: немає дат-0",
+              "name": "error",
+              "value": "Початкова або кінцева дати не вказані",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Помилка: немає дат",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        460
+      ],
+      "id": "hbxReportPeriod01-03"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Помилка: формат дат-0",
+              "name": "error",
+              "value": "Початкова або кінцева дати мають невірний формат (потрібно YYYY-MM-DD)",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Помилка: формат дат",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        380
+      ],
+      "id": "hbxReportPeriod01-04"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1k6ypSqBFD1dRFXTI2i_btTBqGsVPXu3V6hHNHUaLRrE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Log"
+        },
+        "options": {}
+      },
+      "name": "Читання логу (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        120
+      ],
+      "alwaysOutputData": true,
+      "id": "hbxReportPeriod01-05"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d0",
+              "leftValue": "={{ String($json.received_at ?? '').split('T')[0] }}",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              },
+              "rightValue": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "id": "d1",
+              "leftValue": "={{ String($json.received_at ?? '').split('T')[0] }}",
+              "operator": {
+                "type": "dateTime",
+                "operation": "afterOrEquals"
+              },
+              "rightValue": "={{ $('Тригер').first().json.start }}"
+            },
+            {
+              "id": "d2",
+              "leftValue": "={{ String($json.received_at ?? '').split('T')[0] }}",
+              "operator": {
+                "type": "dateTime",
+                "operation": "beforeOrEquals"
+              },
+              "rightValue": "={{ $('Тригер').first().json.end }}"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Filter by Date",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        120
+      ],
+      "alwaysOutputData": true,
+      "id": "hbxReportPeriod01-06"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "k1",
+              "leftValue": "={{ Object.keys($json).length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "If records exist",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        120
+      ],
+      "executeOnce": false,
+      "id": "hbxReportPeriod01-07"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "records",
+        "options": {}
+      },
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        40
+      ],
+      "id": "hbxReportPeriod01-08"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Total count\nconst records = $('Aggregate').first().json.records ?? [];\nreturn [{ json: { count: records.length } }];"
+      },
+      "name": "Count",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        40
+      ],
+      "id": "hbxReportPeriod01-09"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Відсоток негативних звернень\nconst records = $('Aggregate').first().json.records ?? [];\nconst neg = records.filter(r => String(r.sentiment).toLowerCase() === 'negative').length;\nreturn [{ json: { negative_sentiment_percentage: records.length ? +(neg / records.length * 100).toFixed(2) : 0 } }];"
+      },
+      "name": "Negative %",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        40
+      ],
+      "id": "hbxReportPeriod01-10"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Відсоток звернень, де потрібна людина\nconst records = $('Aggregate').first().json.records ?? [];\nconst h = records.filter(r => String(r.requires_human).toLowerCase() === 'true').length;\nreturn [{ json: { requires_human_percentage: records.length ? +(h / records.length * 100).toFixed(2) : 0 } }];"
+      },
+      "name": "Requires human %",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        40
+      ],
+      "id": "hbxReportPeriod01-11"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Топ-3 категорії з кількістю та відсотком\nconst records = $('Aggregate').first().json.records ?? [];\nconst counts = {};\nfor (const r of records) { const c = r.category || 'інше'; counts[c] = (counts[c] || 0) + 1; }\nconst top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3)\n  .map(([category, count]) => ({ category, count, percentage: +(count / records.length * 100).toFixed(2) }));\nreturn [{ json: { top_3_categories: top } }];"
+      },
+      "name": "Top 3 categories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        40
+      ],
+      "id": "hbxReportPeriod01-12"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Result-0",
+              "name": "start",
+              "value": "={{ $('Тригер').first().json.start }}",
+              "type": "string"
+            },
+            {
+              "id": "Result-1",
+              "name": "end",
+              "value": "={{ $('Тригер').first().json.end }}",
+              "type": "string"
+            },
+            {
+              "id": "Result-2",
+              "name": "count",
+              "value": "={{ $('Count').first().json.count }}",
+              "type": "number"
+            },
+            {
+              "id": "Result-3",
+              "name": "negative_sentiment_percentage",
+              "value": "={{ $('Negative %').first().json.negative_sentiment_percentage }}",
+              "type": "number"
+            },
+            {
+              "id": "Result-4",
+              "name": "requires_human_percentage",
+              "value": "={{ $('Requires human %').first().json.requires_human_percentage }}",
+              "type": "number"
+            },
+            {
+              "id": "Result-5",
+              "name": "top_3_categories",
+              "value": "={{ $('Top 3 categories').first().json.top_3_categories }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2420,
+        40
+      ],
+      "id": "hbxReportPeriod01-13"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "Result: немає даних-0",
+              "name": "start",
+              "value": "={{ $('Тригер').first().json.start }}",
+              "type": "string"
+            },
+            {
+              "id": "Result: немає даних-1",
+              "name": "end",
+              "value": "={{ $('Тригер').first().json.end }}",
+              "type": "string"
+            },
+            {
+              "id": "Result: немає даних-2",
+              "name": "count",
+              "value": "0",
+              "type": "number"
+            },
+            {
+              "id": "Result: немає даних-3",
+              "name": "negative_sentiment_percentage",
+              "value": "0",
+              "type": "number"
+            },
+            {
+              "id": "Result: немає даних-4",
+              "name": "requires_human_percentage",
+              "value": "0",
+              "type": "number"
+            },
+            {
+              "id": "Result: немає даних-5",
+              "name": "top_3_categories",
+              "value": "={{ [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Result: немає даних",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        260
+      ],
+      "id": "hbxReportPeriod01-14"
+    }
+  ],
+  "connections": {
+    "Тригер": {
+      "main": [
+        [
+          {
+            "node": "If start and end exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If start and end exist": {
+      "main": [
+        [
+          {
+            "node": "If dates are correct",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Помилка: немає дат",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If dates are correct": {
+      "main": [
+        [
+          {
+            "node": "Читання логу (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Помилка: формат дат",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Читання логу (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Filter by Date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter by Date": {
+      "main": [
+        [
+          {
+            "node": "If records exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If records exist": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Result: немає даних",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count": {
+      "main": [
+        [
+          {
+            "node": "Negative %",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negative %": {
+      "main": [
+        [
+          {
+            "node": "Requires human %",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requires human %": {
+      "main": [
+        [
+          {
+            "node": "Top 3 categories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top 3 categories": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Kyiv",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": []
+}

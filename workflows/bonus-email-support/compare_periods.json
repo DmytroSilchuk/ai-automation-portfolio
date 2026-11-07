@@ -1,0 +1,193 @@
+{
+  "name": "HouseBox — Порівняння періодів",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "start_1",
+              "type": "string"
+            },
+            {
+              "name": "end_1",
+              "type": "string"
+            },
+            {
+              "name": "start_2",
+              "type": "string"
+            },
+            {
+              "name": "end_2",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "name": "Тригер",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "id": "hbxComparePeriods01-00"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hbxReportPeriod01",
+          "mode": "id",
+          "cachedResultName": "HouseBox — Звіт за період"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "start": "={{ $json.start_1 }}",
+            "end": "={{ $json.end_1 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "start",
+              "displayName": "start",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "end",
+              "displayName": "end",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "name": "Calculate period 1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        300
+      ],
+      "id": "hbxComparePeriods01-01"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hbxReportPeriod01",
+          "mode": "id",
+          "cachedResultName": "HouseBox — Звіт за період"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "start": "={{ $('Тригер').first().json.start_2 }}",
+            "end": "={{ $('Тригер').first().json.end_2 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "start",
+              "displayName": "start",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "end",
+              "displayName": "end",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "name": "Calculate period 2",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        300
+      ],
+      "id": "hbxComparePeriods01-02"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Порівняння двох періодів: відсоткова зміна + текстовий висновок\nconst THRESHOLD = 1; // поріг чутливості, %: зміна менша за поріг = «стабільно»\nconst p1 = $('Calculate period 1').first().json;\nconst p2 = $('Calculate period 2').first().json;\n\nif (p1.error || p2.error) {\n  return [{ json: { error: p1.error || p2.error } }];\n}\n\n// Для всіх трьох метрик «менше = краще», крім обсягу, де зменшення = менше звернень (теж добре)\nfunction compare(name, a, b) {\n  a = Number(a) || 0; b = Number(b) || 0;\n  let change;\n  if (a === 0) change = b === 0 ? 0 : 100;           // ділення на нуль\n  else change = (b - a) / a * 100;\n  change = +change.toFixed(2);\n  let verdict;\n  if (Math.abs(change) < THRESHOLD) verdict = 'стабільно';\n  else if (change < 0) verdict = 'покращення';\n  else verdict = 'зростання';\n  return { metric: name, period_1: a, period_2: b, change_percent: change, verdict };\n}\n\nreturn [{ json: {\n  period_1: { start: p1.start, end: p1.end, top_3_categories: p1.top_3_categories },\n  period_2: { start: p2.start, end: p2.end, top_3_categories: p2.top_3_categories },\n  threshold_percent: THRESHOLD,\n  comparison: [\n    compare('count', p1.count, p2.count),\n    compare('negative_sentiment_percentage', p1.negative_sentiment_percentage, p2.negative_sentiment_percentage),\n    compare('requires_human_percentage', p1.requires_human_percentage, p2.requires_human_percentage),\n  ],\n} }];"
+      },
+      "name": "Calculate comparison",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "id": "hbxComparePeriods01-03"
+    }
+  ],
+  "connections": {
+    "Тригер": {
+      "main": [
+        [
+          {
+            "node": "Calculate period 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate period 1": {
+      "main": [
+        [
+          {
+            "node": "Calculate period 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate period 2": {
+      "main": [
+        [
+          {
+            "node": "Calculate comparison",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Kyiv",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": []
+}

@@ -1,0 +1,222 @@
+{
+  "name": "Sales Intelligence · Part 3 · CEO Forecast (тижневий прогноз)",
+  "description": "щоп'ятниці о 19:00 бере всі рядки Deal Health з Google Sheets, Aggregate → AI Agent (без tools) формує прогноз, ТОП-3 ризики та рекомендації → Telegram.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "0e4fcb6a-54d4-40b1-ba25-13b21e960c9e",
+      "name": "Щоп'ятниці о 19:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                5
+              ],
+              "triggerAtHour": 19,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "df314554-8ef2-4541-892d-70ba2c8279a6",
+      "name": "Google Sheets: Deal Health",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "authentication": "oAuth2",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1uthhNtNroo_mojG8aUAXHojatf_0AniOYuQsNqXe3vU"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Deal Health"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f0d18ba4-491d-43b9-9f73-cc8f07340263",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "deals",
+        "include": "allFieldsExcept",
+        "fieldsToExclude": "row_number"
+      }
+    },
+    {
+      "id": "9a9ac610-8900-446a-a3db-3d6419326fdb",
+      "name": "AI CEO Forecast",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Сьогодні: {{ $now.toFormat('yyyy-MM-dd') }}\n\nТаблиця Deal Health ({{ $json.deals.length }} угод):\n{{ JSON.stringify($json.deals) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Ти — AI-радник CEO з продажів. Щоп'ятниці ти готуєш короткий тижневий прогноз для власника B2B-компанії на основі таблиці Deal Health.\n\nВХІДНІ ДАНІ\nУ повідомленні користувача ти отримуєш поточну дату і масив угод з таблиці Deal Health. Кожна угода містить: Deal ID, Deal Name, Stage, Amount (грн), Score (Deal Health 1–10), Summary, Category (Critical / Medium / Normal), Risk Factors, Recommendation, Date (дата останньої оцінки).\n\nЯК РАХУВАТИ ПРОГНОЗ\nОціни ймовірність закриття кожної угоди протягом наступних 30 днів за Score і стадією:\n- Score 8–10 на стадії Negotiation/Review — 70–85%; на інших стадіях — 50–65%;\n- Score 5–7 — 25–45%;\n- Score 1–4 — 5–15%.\n- expected_amount — сума Amount × ймовірність по всіх угодах (зважений прогноз).\n- best_case_amount — сума угод зі Score ≥ 5.\n- worst_case_amount — сума угод зі Score ≥ 8.\nОкруглюй суми до тисяч.\n\nЩО ПОВЕРНУТИ\n- headline: 1–2 речення для CEO — головний висновок тижня.\n- expected_amount, best_case_amount, worst_case_amount — числа в гривнях.\n- likely_deals: до 3 угод, які найімовірніше закриються: назва, сума, ймовірність у %, коротка причина.\n- top_risks: рівно 3 найбільші ризики для виручки, від найбільшої суми під загрозою: назва угоди, сума, суть ризику одним реченням.\n- recommendations: 3–4 конкретні управлінські рішення на наступний тиждень — що має зробити CEO або керівник продажів.\n\nПРАВИЛА\n- Пиши українською, мовою власника бізнесу: гроші, ризики, рішення. Без жаргону і води.\n- Використовуй тільки дані з таблиці. Не вигадуй угод, сум і фактів.\n- Суми повертай числами без пробілів і валюти.\n- Не використовуй HTML чи Markdown у текстових полях.\n"
+        }
+      }
+    },
+    {
+      "id": "88104053-f3e8-45bd-adfc-1830755972b1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        600,
+        540
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "timeout": 240000,
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "id": "e07de4d6-349e-4e97-9c7c-2a94286404a7",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        780,
+        540
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"headline\": {\n      \"type\": \"string\"\n    },\n    \"expected_amount\": {\n      \"type\": \"number\"\n    },\n    \"best_case_amount\": {\n      \"type\": \"number\"\n    },\n    \"worst_case_amount\": {\n      \"type\": \"number\"\n    },\n    \"likely_deals\": {\n      \"type\": \"array\",\n      \"maxItems\": 3,\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"deal_name\": {\n            \"type\": \"string\"\n          },\n          \"amount\": {\n            \"type\": \"number\"\n          },\n          \"probability_pct\": {\n            \"type\": \"integer\"\n          },\n          \"reason\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"deal_name\",\n          \"amount\",\n          \"probability_pct\",\n          \"reason\"\n        ]\n      }\n    },\n    \"top_risks\": {\n      \"type\": \"array\",\n      \"minItems\": 3,\n      \"maxItems\": 3,\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"deal_name\": {\n            \"type\": \"string\"\n          },\n          \"amount\": {\n            \"type\": \"number\"\n          },\n          \"risk\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"deal_name\",\n          \"amount\",\n          \"risk\"\n        ]\n      }\n    },\n    \"recommendations\": {\n      \"type\": \"array\",\n      \"minItems\": 3,\n      \"maxItems\": 4,\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"required\": [\n    \"headline\",\n    \"expected_amount\",\n    \"best_case_amount\",\n    \"worst_case_amount\",\n    \"likely_deals\",\n    \"top_risks\",\n    \"recommendations\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "fc9c4bb4-ed4e-4e2f-89ed-bd3e9d1bda9b",
+      "name": "Telegram: CEO Forecast",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ (() => {\n  const o = $json.output;\n  const deals = $('Aggregate').first().json.deals;\n  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const money = n => String(Math.round(Number(n) || 0)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ') + ' грн';\n  const total = deals.reduce((s, d) => s + (Number(d.Amount) || 0), 0);\n  const cnt = c => deals.filter(d => d.Category === c).length;\n  const lines = [];\n  lines.push('📈 <b>CEO FORECAST</b>');\n  lines.push('📅 Тиждень до ' + $now.toFormat('dd.MM.yyyy'));\n  lines.push('');\n  lines.push(esc(o.headline));\n  lines.push('');\n  lines.push('<b>📊 Портфель під контролем</b>');\n  lines.push(deals.length + ' угод на ' + money(total));\n  lines.push('🔴 Critical: ' + cnt('Critical') + ' · 🟡 Medium: ' + cnt('Medium') + ' · 🟢 Normal: ' + cnt('Normal'));\n  lines.push('');\n  lines.push('<b>💰 Прогноз закриття (30 днів)</b>');\n  lines.push('Реалістичний: <b>' + money(o.expected_amount) + '</b>');\n  lines.push('Оптимістичний: ' + money(o.best_case_amount));\n  lines.push('Песимістичний: ' + money(o.worst_case_amount));\n  lines.push('');\n  lines.push('<b>✅ Найімовірніше закриються</b>');\n  o.likely_deals.forEach(d => lines.push('• <b>' + esc(d.deal_name) + '</b> — ' + money(d.amount) + ' (' + d.probability_pct + '%): ' + esc(d.reason)));\n  lines.push('');\n  lines.push('<b>🚨 ТОП-3 ризики</b>');\n  o.top_risks.forEach((d, i) => lines.push((i + 1) + '. <b>' + esc(d.deal_name) + '</b> — ' + money(d.amount) + '\\n' + esc(d.risk)));\n  lines.push('');\n  lines.push('<b>🎯 Рішення на тиждень</b>');\n  o.recommendations.forEach((x, i) => lines.push((i + 1) + '. ' + esc(x)));\n  return lines.join('\\n');\n})() }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Щоп'ятниці о 19:00": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets: Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets: Deal Health": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "AI CEO Forecast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI CEO Forecast": {
+      "main": [
+        [
+          {
+            "node": "Telegram: CEO Forecast",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI CEO Forecast",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI CEO Forecast",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Kyiv"
+  },
+  "nodeGroups": []
+}

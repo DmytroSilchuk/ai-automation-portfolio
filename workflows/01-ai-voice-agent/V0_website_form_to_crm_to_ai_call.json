@@ -1,0 +1,137 @@
+{
+  "name": "GrowthLab V0 · Заявка з сайту → лід у Zoho → AI-дзвінок (демо)",
+  "description": "Демо: форма-заявка створює лід у Zoho CRM і надсилає його на вебхук V3, який через 2 хв запускає AI-дзвінок.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "4fe04488-33e6-4a31-81de-413c0e3aee13",
+      "name": "Заявка на сайті GrowthLab",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "formTitle": "GrowthLab — безкоштовний аудит продажів",
+        "formDescription": "Залиште контакти — наш AI-консультант зателефонує протягом кількох хвилин.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Ім'я",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Прізвище",
+              "requiredField": false
+            },
+            {
+              "fieldLabel": "Компанія",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Телефон",
+              "fieldType": "text",
+              "placeholder": "+380…",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Дякуємо! Консультант GrowthLab зателефонує вам протягом кількох хвилин."
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "e690564e-b97a-49b9-bb8c-dc9573be3c6b",
+      "name": "Zoho CRM · створити лід",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "create",
+        "lastName": "={{ $json['Прізвище'] || $json[\"Ім'я\"] }}",
+        "Company": "={{ $json['Компанія'] }}",
+        "additionalFields": {
+          "First_Name": "={{ $json['Прізвище'] ? $json[\"Ім'я\"] : '' }}",
+          "Phone": "={{ String($json['Телефон']).replace(/[^+\\d]/g, '') }}",
+          "Lead_Source": "Web Site",
+          "Lead_Status": "Not Contacted"
+        }
+      }
+    },
+    {
+      "id": "ce7b8e0f-f623-4a7a-85aa-629a74888cfd",
+      "name": "Вебхук «новий лід» → V3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-N8N-HOST/webhook/growthlab-new-lead",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lead_id: $json.id }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "019fbbd9-8771-4afc-ab90-e40a6841667e",
+      "name": "Sticky Note 4942d96a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        180
+      ],
+      "parameters": {
+        "content": "## V0 · Заявка з сайту → лід у CRM → вебхук V3\nФорма n8n імітує форму на сайті: створює лід у Zoho CRM і надсилає його ID на вебхук V3 (так само, як це робило б правило Zoho «Lead created»). Через 2 хвилини V3 запускає AI-дзвінок.",
+        "color": 4,
+        "width": 560,
+        "height": 200
+      }
+    }
+  ],
+  "connections": {
+    "Заявка на сайті GrowthLab": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · створити лід",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · створити лід": {
+      "main": [
+        [
+          {
+            "node": "Вебхук «новий лід» → V3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

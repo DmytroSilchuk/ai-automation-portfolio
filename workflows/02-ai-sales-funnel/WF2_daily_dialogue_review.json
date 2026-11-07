@@ -1,0 +1,560 @@
+{
+  "name": "GrowthLab WF2 · AI-аналіз діалогів чатбота (щодня 09:00)",
+  "description": "щодня о 09:00 бере ліди з Zoho, для кожного з sessionId (Skype_ID) підтягує діалог із Postgres через Chat Memory Manager, AI-аналітик пише помилки/проблему/патерн у Google Sheets.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "d033f49f-596b-4d9c-999c-67ae2a5ec2e3",
+      "name": "Щодня о 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        352
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b836b807-5630-4dfe-bee0-53a1c4fa21c1",
+      "name": "Zoho CRM · всі ліди",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        224,
+        352
+      ],
+      "parameters": {
+        "resource": "lead",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "Last_Name",
+            "First_Name",
+            "Company",
+            "Lead_Status",
+            "Lead_Source",
+            "score_AI",
+            "Skype_ID",
+            "Owner",
+            "Created_Time",
+            "SCORE_COMMENT",
+            "AI_Objections",
+            "Description"
+          ]
+        }
+      }
+    },
+    {
+      "id": "0d5aaf73-4ca6-44f3-b05f-240c535ff02f",
+      "name": "Є Skype_ID (sessionId)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        352
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.Skype_ID }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "cb249a7c-8ca6-4147-ab18-d67e6da387fb",
+      "name": "Chat Memory Manager · діалог ліда",
+      "type": "@n8n/n8n-nodes-langchain.memoryManager",
+      "typeVersion": 1.1,
+      "position": [
+        912,
+        240
+      ],
+      "parameters": {
+        "mode": "load",
+        "simplifyOutput": true,
+        "options": {
+          "groupMessages": true
+        }
+      }
+    },
+    {
+      "id": "581c557a-fbcf-4107-b926-5d78694ee43f",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.4,
+      "position": [
+        928,
+        448
+      ],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Loop Over Items').item.json.Skype_ID }}",
+        "tableName": "growthlab_chat_histories",
+        "contextWindowLength": 50
+      }
+    },
+    {
+      "id": "526ba441-d8ab-47ce-9429-e12fe4882c0c",
+      "name": "AI-аналітик діалогів",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1392,
+        240
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Лід у CRM:\n- Lead ID: {{ $json.lead_id }}\n- Клієнт: {{ $json.client }}, компанія: {{ $json.company }}\n- Score у CRM: {{ $json.score }}, статус: {{ $json.status }}\n- Обґрунтування скорингу від чатбота: {{ $json.score_comment }}\n\nДіалог ({{ $json.messages_count }} обмінів):\n{{ $json.dialog }}",
+        "options": {
+          "systemMessage": "Ти — QA-аналітик відділу продажів GrowthLab. Аналізуєш діалоги AI-чатбота «Аліна», який кваліфікує ліди за BANT на сайті.\n\nЕталон роботи чатбота:\n- Одне питання за раз, коротко, віддзеркалює відповідь клієнта.\n- Збирає Need → Timeline → Authority → Budget + ім'я, компанію, телефон.\n- Скоринг 0–25 на кожен критерій: Budget (≥$3 500 = 25; $1 500–3 500 = 15; <$1 500 або «невідомо» = 5), Authority (ЛПР = 25; впливає = 15; збирає інфо = 5), Need (біль + 100+ лідів/міс = 25; біль, помірний потік = 15; «цікавлюсь» = 5), Timeline (≤1 міс = 25; 1–3 міс = 15; >3 міс = 5). Статус: 70+ Pre-Qualified, 40–69 Contact in Future, <40 Not Qualified.\n- Створює ліда рівно один раз, навіть якщо клієнт двічі відмовився дати телефон.\n- Не виходить за межі теми GrowthLab і не консультує безкоштовно «на стороні».\n\nДля кожного діалогу визнач:\n1. ПОМИЛКИ АГЕНТА — конкретно, з короткими цитатами: пропущені BANT-питання, повторні питання, кілька питань в одному повідомленні, завищений/занижений score (перерахуй сам і порівняй з Score у CRM), відхід від теми, невідпрацьовані заперечення, друкарські помилки в даних ліда.\n2. ПРОБЛЕМУ КЛІЄНТА — його реальний біль.\n3. ЗАПЕРЕЧЕННЯ — які були і чи якісно їх відпрацьовано.\n4. УСПІШНИЙ ПАТЕРН — що спрацювало і варто повторювати.\n5. РЕКОМЕНДАЦІЮ ДЛЯ ПРОМПТУ — конкретне формулювання, яке треба додати/змінити в system prompt чатбота.\n6. ОЦІНКУ ДІАЛОГУ 1–10.\n\nСпирайся ЛИШЕ на наданий діалог і дані CRM — нічого не вигадуй. Якщо діалог порожній, у полі «Помилки агента» напиши «діалог не знайдено в памʼяті», оцінку постав 0, решту полів — «н/д».\n\nПиши українською, стисло (кожне поле до 300 символів). Обов'язково виклич інструмент save_analysis рівно ОДИН раз, після чого відповідай одним словом: «збережено».",
+          "maxIterations": 4
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1cd078ef-ade4-474f-a6f7-83ffe448c832",
+      "name": "OpenAI gpt-5-mini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1360,
+        448
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "id": "32057700-4de7-4b39-877a-e4719bc89f41",
+      "name": "save_analysis",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1520,
+        448
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Записує результат аналізу одного діалогу в Google Sheets (рядок оновлюється за Lead ID). Виклич рівно один раз.",
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "cachedResultName": "GrowthLab — AI Sales Ecosystem (аналіз діалогів)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Аналіз діалогів"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Lead ID"
+          ],
+          "value": {
+            "Дата аналізу": "={{ $now.setZone('Europe/Kyiv').toFormat('yyyy-MM-dd HH:mm') }}",
+            "Lead ID": "={{ $json.lead_id }}",
+            "Session ID": "={{ $json.session_id }}",
+            "Клієнт": "={{ $json.client }}",
+            "Компанія": "={{ $json.company }}",
+            "Score": "={{ $json.score }}",
+            "Статус ліда": "={{ $json.status }}",
+            "Оцінка діалогу (1-10)": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('dialog_rating', 'Оцінка якості роботи агента в діалозі від 1 до 10', 'number') }}",
+            "Помилки агента": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('agent_errors', 'Конкретні помилки агента з цитатами, через \"; \" або \"немає\"') }}",
+            "Проблема клієнта": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('client_problem', 'Головний біль/потреба клієнта одним-двома реченнями') }}",
+            "Заперечення": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('objections', 'Заперечення клієнта і чи відпрацював їх агент, або \"немає\"') }}",
+            "Успішний патерн": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('success_pattern', 'Що агент зробив добре і варто масштабувати') }}",
+            "Рекомендація для промпту": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('prompt_recommendation', 'Конкретна правка до system prompt чатбота (що додати/змінити)') }}"
+          },
+          "schema": [
+            {
+              "id": "Дата аналізу",
+              "displayName": "Дата аналізу",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Session ID",
+              "displayName": "Session ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Клієнт",
+              "displayName": "Клієнт",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Компанія",
+              "displayName": "Компанія",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Статус ліда",
+              "displayName": "Статус ліда",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Оцінка діалогу (1-10)",
+              "displayName": "Оцінка діалогу (1-10)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Помилки агента",
+              "displayName": "Помилки агента",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Проблема клієнта",
+              "displayName": "Проблема клієнта",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Заперечення",
+              "displayName": "Заперечення",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Успішний патерн",
+              "displayName": "Успішний патерн",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Рекомендація для промпту",
+              "displayName": "Рекомендація для промпту",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      }
+    },
+    {
+      "id": "06d187f2-e7ce-4bf3-896c-c034159dddb0",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        352
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "a4e323a3-7da3-4295-b92d-e0aa8aeb77c2",
+      "name": "Sticky Note e277c805",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -64
+      ],
+      "parameters": {
+        "content": "## WF2 · Щоденний AI-аналіз діалогів\nZoho (усі ліди) → Loop → IF Skype_ID не порожній → **Chat Memory Manager** підтягує діалог із Postgres за sessionId (= Skype_ID) → «Лід + діалог» → AI-аналітик: помилки агента, біль клієнта, заперечення, успішний патерн → **Google Sheets** (upsert за Lead ID).",
+        "color": 5,
+        "height": 160,
+        "width": 860
+      }
+    },
+    {
+      "id": "88a3caf3-edee-4975-b370-8e35ce16e5bb",
+      "name": "Лід + діалог",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1152,
+        240
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "lead_id",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.id }}"
+            },
+            {
+              "id": "a2",
+              "name": "session_id",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.Skype_ID }}"
+            },
+            {
+              "id": "a3",
+              "name": "client",
+              "type": "string",
+              "value": "={{ [$('Loop Over Items').item.json.First_Name, $('Loop Over Items').item.json.Last_Name].filter(Boolean).join(' ') }}"
+            },
+            {
+              "id": "a4",
+              "name": "company",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.Company }}"
+            },
+            {
+              "id": "a5",
+              "name": "score",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.score_AI }}"
+            },
+            {
+              "id": "a6",
+              "name": "status",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.Lead_Status }}"
+            },
+            {
+              "id": "a7",
+              "name": "score_comment",
+              "type": "string",
+              "value": "={{ $('Loop Over Items').item.json.SCORE_COMMENT }}"
+            },
+            {
+              "id": "a8",
+              "name": "dialog",
+              "type": "string",
+              "value": "={{ ($json.messages || []).flatMap(m => [m.human && String(m.human).trim() ? 'Клієнт: ' + m.human : null, m.ai && String(m.ai).trim() ? 'Бот: ' + m.ai : null]).filter(Boolean).join('\\n') }}"
+            },
+            {
+              "id": "a9",
+              "name": "messages_count",
+              "type": "number",
+              "value": "={{ ($json.messages || []).filter(m => m.human && String(m.human).trim()).length }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Щодня о 09:00": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM · всі ліди",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM · всі ліди": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Є Skype_ID (sessionId)?": {
+      "main": [
+        [
+          {
+            "node": "Chat Memory Manager · діалог ліда",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Chat Memory Manager · діалог ліда",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI-аналітик діалогів": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI gpt-5-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI-аналітик діалогів",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "save_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI-аналітик діалогів",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Є Skype_ID (sessionId)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Memory Manager · діалог ліда": {
+      "main": [
+        [
+          {
+            "node": "Лід + діалог",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Лід + діалог": {
+      "main": [
+        [
+          {
+            "node": "AI-аналітик діалогів",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "nodeGroups": []
+}

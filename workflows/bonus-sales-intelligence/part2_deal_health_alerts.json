@@ -1,0 +1,670 @@
+{
+  "name": "Sales Intelligence · Part 2 · Deal Health Alerts (щотижневий аналіз)",
+  "description": "щопонеділка AI оцінює Health Score кожної угоди на ризикових стадіях (дані з sub-workflow), пише в Google Sheets (upsert по Deal ID), Switch → Telegram-алерти Critical/Medium.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "b9429381-5f0b-49af-bf30-663a6d58bfa4",
+      "name": "Щопонеділка о 09:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4cae53e2-76b0-4b6c-8c73-03f5166ac10f",
+      "name": "Zoho CRM: всі угоди",
+      "type": "n8n-nodes-base.zohoCrm",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "resource": "deal",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fields": [
+            "Deal_Name",
+            "Stage",
+            "Amount",
+            "Closing_Date",
+            "Probability",
+            "Next_Step",
+            "Description"
+          ]
+        }
+      }
+    },
+    {
+      "id": "6763fc17-93c3-45a8-8c92-1efe0857eaf2",
+      "name": "Стадія з ризиком?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.Stage }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "Proposal/Price Quote"
+            },
+            {
+              "leftValue": "={{ $json.Stage }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "Negotiation/Review"
+            },
+            {
+              "leftValue": "={{ $json.Stage }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "Value Proposition"
+            },
+            {
+              "leftValue": "={{ $json.Stage }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "Identify Decision Makers"
+            }
+          ],
+          "combinator": "or"
+        }
+      }
+    },
+    {
+      "id": "7a4b51c3-1169-4964-9daf-b3a326929ba4",
+      "name": "Sub-workflow: Notes, Calls, Tasks",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "aJq9GOFZL2CsUtmd"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $json.id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d82d737d-7eae-48a9-b25b-b09235f68e10",
+      "name": "AI Deal Health",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Сьогодні: {{ $now.toFormat('yyyy-MM-dd') }}\n\nКАРТКА УГОДИ:\n{{ JSON.stringify((d => ({ deal_id: d.id, name: d.Deal_Name, stage: d.Stage, amount: d.Amount, closing_date: d.Closing_Date, probability: d.Probability, next_step: d.Next_Step, description: d.Description }))($('Loop Over Items').first().json)) }}\n\nNOTES:\n{{ JSON.stringify($json.notes) }}\n\nCALLS:\n{{ JSON.stringify($json.calls) }}\n\nTASKS:\n{{ JSON.stringify($json.tasks) }}\n\nSTATS:\n{{ JSON.stringify($json.stats) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Ти — AI-аналітик відділу продажів B2B-компанії. Раз на тиждень ти оцінюєш «здоров'я» кожної відкритої угоди в Zoho CRM і виставляєш Deal Health Score від 1 до 10.\n\nВХІДНІ ДАНІ\nУ повідомленні користувача ти отримуєш:\n- картку угоди: назва, стадія, сума (грн), дата закриття, ймовірність, наступний крок, опис;\n- Notes — нотатки менеджера (JSON);\n- Calls — історія дзвінків, від найновішого (JSON);\n- Tasks — задачі з дедлайнами і статусами, поле overdue = true означає прострочену задачу (JSON);\n- Stats — лічильники: днів від останнього дзвінка, кількість відкритих і прострочених задач;\n- сьогоднішню дату.\n\nШКАЛА ОЦІНКИ\n- 9–10: угода рухається за планом — свіжий контакт (до 7 днів), клієнт активний, наступний крок і дата узгоджені, прострочених задач немає.\n- 8: здорова угода з дрібними питаннями, що не загрожують закриттю.\n- 5–7 (Medium): є відчутні ризики — контакт 8–20 днів тому, клієнт торгується або дивиться на конкурента, змінюється ЛПР, є прострочена задача, але клієнт ще на зв'язку.\n- 1–4 (Critical): угода під загрозою — контакту понад 20 днів, клієнт не відповідає, дата закриття прострочена на пізній стадії, бюджет заморожено, втрачено чемпіона без заміни, кілька прострочених задач.\nКожен серйозний ризик знижує оцінку. Свіжа позитивна активність клієнта її підвищує.\n\nПОЛЯ ВІДПОВІДІ\n- score: ціле число 1–10 за шкалою вище.\n- category_label: \"Critical\", якщо score ≤ 4; \"Medium\", якщо score 5–7; \"Normal\", якщо score ≥ 8. Мітка має збігатися з оцінкою.\n- summary: 1–2 речення про поточний стан угоди з конкретними фактами і датами.\n- risk_factors: 1–4 коротких ризики, кожен з фактом (наприклад, «Останній дзвінок 19.09 — 25 днів без контакту»). Якщо ризиків немає, поверни порожній масив.\n- recommendation_actions: 1–3 конкретні дії на цей тиждень у форматі «що зробити — з ким — до коли».\n\nПРАВИЛА\n- Пиши українською, коротко, без води.\n- Спирайся тільки на надані дані. Не вигадуй імен, дат і фактів, яких немає в картці, нотатках, дзвінках чи задачах.\n- Дати пиши у форматі ДД.ММ.\n- Не використовуй HTML чи Markdown у текстових полях.\n"
+        }
+      }
+    },
+    {
+      "id": "4c119af4-770c-4b79-8398-7822399152ec",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1040,
+        440
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "options": {
+          "timeout": 240000,
+          "reasoningEffort": "low"
+        }
+      }
+    },
+    {
+      "id": "ce61a2f2-d1b8-4c13-81fe-686ab24d5c8e",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1200,
+        440
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"score\": {\n      \"type\": \"integer\",\n      \"minimum\": 1,\n      \"maximum\": 10,\n      \"description\": \"Deal Health Score 1-10\"\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"description\": \"1-2 речення про стан угоди\"\n    },\n    \"category_label\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"Critical\",\n        \"Medium\",\n        \"Normal\"\n      ]\n    },\n    \"risk_factors\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"recommendation_actions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"required\": [\n    \"score\",\n    \"summary\",\n    \"category_label\",\n    \"risk_factors\",\n    \"recommendation_actions\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "e5be1598-ea11-4df8-9316-2a8eea90566b",
+      "name": "Google Sheets: Deal Health",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1340,
+        200
+      ],
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "authentication": "oAuth2",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1uthhNtNroo_mojG8aUAXHojatf_0AniOYuQsNqXe3vU"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Deal Health"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Deal ID": "={{ $('Loop Over Items').first().json.id }}",
+            "Deal Name": "={{ $('Loop Over Items').first().json.Deal_Name }}",
+            "Stage": "={{ $('Loop Over Items').first().json.Stage }}",
+            "Amount": "={{ $('Loop Over Items').first().json.Amount }}",
+            "Score": "={{ $json.output.score }}",
+            "Summary": "={{ $json.output.summary }}",
+            "Category": "={{ $json.output.category_label }}",
+            "Risk Factors": "={{ $json.output.risk_factors.map(x => '• ' + x).join('\\n') }}",
+            "Recommendation": "={{ $json.output.recommendation_actions.map((x, i) => (i + 1) + '. ' + x).join('\\n') }}",
+            "Date": "={{ $now.toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "Deal ID"
+          ],
+          "schema": [
+            {
+              "id": "Deal ID",
+              "displayName": "Deal ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Deal Name",
+              "displayName": "Deal Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Stage",
+              "displayName": "Stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Amount",
+              "displayName": "Amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Risk Factors",
+              "displayName": "Risk Factors",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Recommendation",
+              "displayName": "Recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "disabled": false
+    },
+    {
+      "id": "035da9c9-4c39-482a-a511-948c3e14e6cb",
+      "name": "Switch: рівень ризику",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1560,
+        200
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "renameOutput": true,
+              "outputKey": "Critical (≤4)",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('AI Deal Health').first().json.output.score }}",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lte"
+                    },
+                    "rightValue": 4
+                  }
+                ]
+              }
+            },
+            {
+              "renameOutput": true,
+              "outputKey": "Medium (≤7)",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('AI Deal Health').first().json.output.score }}",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lte"
+                    },
+                    "rightValue": 7
+                  }
+                ]
+              }
+            },
+            {
+              "renameOutput": true,
+              "outputKey": "Normal (<10)",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('AI Deal Health').first().json.output.score }}",
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    },
+                    "rightValue": 10
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 2
+        }
+      }
+    },
+    {
+      "id": "707e7042-5fd0-4cfa-91df-f983cafbfe77",
+      "name": "Telegram: 🔴 Critical",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        40
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ (() => {\n  const d = $('Loop Over Items').first().json;\n  const o = $('AI Deal Health').first().json.output;\n  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const money = n => String(Math.round(Number(n) || 0)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ') + ' грн';\n  const link = 'https://crm.zoho.eu/crm/tab/Potentials/' + d.id;\n  const lines = [];\n  lines.push('🔴 <b>CRITICAL · Deal Health ' + o.score + '/10</b>');\n  lines.push('');\n  lines.push('<b><a href=\"' + link + '\">' + esc(d.Deal_Name) + '</a></b>');\n  lines.push('Статус: <b>' + esc(d.Stage) + '</b>');\n  lines.push('Сума: ' + money(d.Amount) + ' · Закриття: ' + (d.Closing_Date || '—').split('-').reverse().join('.'));\n  lines.push('');\n  lines.push('📋 ' + esc(o.summary));\n  if (o.risk_factors.length) {\n    lines.push('');\n    lines.push('<b>⚠️ Ризики</b>');\n    o.risk_factors.forEach(x => lines.push('• ' + esc(x)));\n  }\n  lines.push('');\n  lines.push('<b>👉 Що зробити</b>');\n  o.recommendation_actions.forEach((x, i) => lines.push((i + 1) + '. ' + esc(x)));\n  lines.push('');\n  lines.push('🔗 <a href=\"' + link + '\">Відкрити угоду в Zoho CRM</a>');\n  return lines.join('\\n');\n})() }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      }
+    },
+    {
+      "id": "5da2d45e-8d0b-4711-ae8e-bbc840073423",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "f08eff72-171b-41a7-abc5-d12ff4798ea6",
+      "name": "Telegram: 🟡 Medium",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1800,
+        220
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ (() => {\n  const d = $('Loop Over Items').first().json;\n  const o = $('AI Deal Health').first().json.output;\n  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n  const money = n => String(Math.round(Number(n) || 0)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ') + ' грн';\n  const link = 'https://crm.zoho.eu/crm/tab/Potentials/' + d.id;\n  const lines = [];\n  lines.push('🟡 <b>MEDIUM · Deal Health ' + o.score + '/10</b>');\n  lines.push('');\n  lines.push('<b><a href=\"' + link + '\">' + esc(d.Deal_Name) + '</a></b>');\n  lines.push('Статус: <b>' + esc(d.Stage) + '</b>');\n  lines.push('Сума: ' + money(d.Amount) + ' · Закриття: ' + (d.Closing_Date || '—').split('-').reverse().join('.'));\n  lines.push('');\n  lines.push('📋 ' + esc(o.summary));\n  if (o.risk_factors.length) {\n    lines.push('');\n    lines.push('<b>⚠️ Ризики</b>');\n    o.risk_factors.forEach(x => lines.push('• ' + esc(x)));\n  }\n  lines.push('');\n  lines.push('<b>👉 Що зробити</b>');\n  o.recommendation_actions.forEach((x, i) => lines.push((i + 1) + '. ' + esc(x)));\n  lines.push('');\n  lines.push('🔗 <a href=\"' + link + '\">Відкрити угоду в Zoho CRM</a>');\n  return lines.join('\\n');\n})() }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      }
+    },
+    {
+      "id": "774f3713-c3a9-4167-937d-489731a33784",
+      "name": "Normal — без алерту",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        400
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Щопонеділка о 09:30": {
+      "main": [
+        [
+          {
+            "node": "Zoho CRM: всі угоди",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zoho CRM: всі угоди": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Стадія з ризиком?": {
+      "main": [
+        [
+          {
+            "node": "Sub-workflow: Notes, Calls, Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub-workflow: Notes, Calls, Tasks": {
+      "main": [
+        [
+          {
+            "node": "AI Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Deal Health": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets: Deal Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Deal Health",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Deal Health",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets: Deal Health": {
+      "main": [
+        [
+          {
+            "node": "Switch: рівень ризику",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch: рівень ризику": {
+      "main": [
+        [
+          {
+            "node": "Telegram: 🔴 Critical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: 🟡 Medium",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normal — без алерту",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: 🔴 Critical": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Стадія з ризиком?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: 🟡 Medium": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normal — без алерту": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Kyiv"
+  },
+  "nodeGroups": []
+}
